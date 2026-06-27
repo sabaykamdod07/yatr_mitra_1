@@ -1,10 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
-import 'landing_screen.dart';
-<<<<<<< HEAD
 import 'welcome_screen.dart';
-=======
->>>>>>> 3534e475c09ebf20b66ba6a27b1ee91fd98c5a5a
 
 class AnimatedSplashScreen extends StatefulWidget {
   const AnimatedSplashScreen({super.key});
@@ -39,18 +35,12 @@ class _AnimatedSplashScreenState extends State<AnimatedSplashScreen> {
           _isVideoFinished = true;
         });
         
-        // 3. Smoothly slide/fade into your static layout code screen
+        // 3. Smoothly slide/fade into your Welcome Screen layout code screen
         Future.delayed(const Duration(milliseconds: 500), () {
           if (mounted) {
             Navigator.of(context).pushReplacement(
               PageRouteBuilder(
-<<<<<<< HEAD
-                // TO THIS:
-pageBuilder: (context, animation, secondaryAnimation) => const WelcomeScreen(),
-
-=======
-                pageBuilder: (context, animation, secondaryAnimation) => const LandingScreen(),
->>>>>>> 3534e475c09ebf20b66ba6a27b1ee91fd98c5a5a
+                pageBuilder: (context, animation, secondaryAnimation) => const WelcomeScreen(),
                 transitionsBuilder: (context, animation, secondaryAnimation, child) {
                   return FadeTransition(opacity: animation, child: child);
                 },
@@ -69,17 +59,17 @@ pageBuilder: (context, animation, secondaryAnimation) => const WelcomeScreen(),
     super.dispose();
   }
 
-    @override
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white, // Matches the clean app canvas background
-      body: SizedBox.expand( // <--- Forces the layout container to stretch to 100% phone width & height
+      body: SizedBox.expand( // Forces the layout container to stretch to 100% phone width & height
         child: _controller.value.isInitialized
             ? AnimatedOpacity(
                 opacity: _isVideoFinished ? 0.0 : 1.0,
                 duration: const Duration(milliseconds: 500),
                 child: FittedBox(
-                  fit: BoxFit.cover, // <--- Centers the video and stretches it to fill the screen without leaving black bars
+                  fit: BoxFit.cover, // Centers the video and stretches it to fill the screen without leaving black bars
                   child: SizedBox(
                     width: _controller.value.size.width,
                     height: _controller.value.size.height,
@@ -95,5 +85,4 @@ pageBuilder: (context, animation, secondaryAnimation) => const WelcomeScreen(),
       ),
     );
   }
-
 }

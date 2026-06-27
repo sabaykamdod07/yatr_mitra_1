@@ -3,13 +3,12 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  app_links
+  passkeys_windows
+  url_launcher_windows
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
-<<<<<<< HEAD
-=======
-  jni
->>>>>>> 3534e475c09ebf20b66ba6a27b1ee91fd98c5a5a
 )
 
 set(PLUGIN_BUNDLED_LIBRARIES)

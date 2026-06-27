@@ -13,6 +13,7 @@ dependencies:
   flutter_svg: ^2.0.9
   iconsax: ^0.0.8
   video_player: ^2.9.0 
+  supabase_flutter: ^2.15.0
 
 dev_dependencies:
   flutter_test:

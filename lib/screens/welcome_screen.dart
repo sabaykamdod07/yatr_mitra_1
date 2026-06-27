@@ -4,6 +4,7 @@ import 'package:video_player/video_player.dart';
 import 'dart:ui';
 import '../widgets/welcome_button.dart';
 import '../widgets/section_title.dart';
+import 'role_selection_screen.dart'; // 🚀 IMPORTED: So navigation works perfectly
 
 class WelcomeScreen extends StatefulWidget {
   const WelcomeScreen({super.key});
@@ -165,7 +166,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> with TickerProviderStateM
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) { 
     final size = MediaQuery.of(context).size;
 
     return Scaffold(
@@ -233,13 +234,12 @@ class _WelcomeScreenState extends State<WelcomeScreen> with TickerProviderStateM
                             Stack(
                               alignment: Alignment.center,
                               children: [
-                                // Layer 1: Massive Outer Neon Blur Background Glow
                                 Text(
-                                  "Empowering Child Safety Through Safe Digital Transportation",
+                                  "Empowering Women Through Safe Digital Transportation",
                                   textAlign: TextAlign.center,
                                   style: TextStyle(
                                     fontSize: 34,
-                                    fontWeight: FontWeight.w800,
+                                    fontWeight: FontWeight.w900,
                                     letterSpacing: -0.5,
                                     height: 1.25,
                                     fontFamily: 'sans-serif-condensed',
@@ -253,13 +253,12 @@ class _WelcomeScreenState extends State<WelcomeScreen> with TickerProviderStateM
                                     ],
                                   ),
                                 ),
-                                // Layer 2: Clean Sharp Foreground White Text
                                 const Text(
-                                  "Empowering Child Safety Through Safe Digital Transportation",
+                                  "Empowering Women Through Safe Digital Transportation",
                                   textAlign: TextAlign.center,
                                   style: TextStyle(
                                     fontSize: 34,
-                                    fontWeight: FontWeight.w800,
+                                    fontWeight: FontWeight.w900,
                                     color: Colors.white,
                                     letterSpacing: -0.5,
                                     height: 1.25,
@@ -270,7 +269,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> with TickerProviderStateM
                             ),
                             const SizedBox(height: 24),
                             Text(
-                              "Yatra Mitra is an AI-powered platform designed to improve Children's safety during travel by providing smart route assistance, emergency support, and digital accessibility.",
+                              "Yatra Mitra is an AI-powered platform designed to improve women's safety during travel by providing smart route assistance, emergency support, and digital accessibility.",
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 16,
@@ -286,7 +285,6 @@ class _WelcomeScreenState extends State<WelcomeScreen> with TickerProviderStateM
                           ],
                         ),
                       ),
-                      
                       SizedBox(height: size.height * 0.06),
                       
                       // Feature Cards Grid Array
@@ -303,18 +301,17 @@ class _WelcomeScreenState extends State<WelcomeScreen> with TickerProviderStateM
                             ),
                             _LocalGlassCard(
                               icon: Icons.shield_rounded,
-                              title: "Child's Safety",
+                              title: "Women Safety",
                               description: "Emergency assistance and secure travel.",
                             ),
                             _LocalGlassCard(
                               icon: Icons.phone_android_rounded,
                               title: "Digital Empowerment",
-                              description: "Helping Child and Parents gain confidence through technology.",
+                              description: "Helping women gain confidence through technology.",
                             ),
                           ],
                         ),
                       ),
-                      
                       SizedBox(height: size.height * 0.06),
                       
                       // Performance Metric Statistics Panel
@@ -330,7 +327,6 @@ class _WelcomeScreenState extends State<WelcomeScreen> with TickerProviderStateM
                           ],
                         ),
                       ),
-                      
                       SizedBox(height: size.height * 0.08),
                       
                       // Interactive Navigation Action Cluster
@@ -342,7 +338,10 @@ class _WelcomeScreenState extends State<WelcomeScreen> with TickerProviderStateM
                               text: "LOGIN",
                               isGradient: true,
                               onPressed: () {
-                                print("Navigate to Login");
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (_) => const RoleSelectionScreen()),
+                                );
                               },
                             ),
                             const SizedBox(height: 14),
@@ -387,7 +386,7 @@ class _TeamMemberTile extends StatelessWidget {
   final String name;
   final String phone;
   const _TeamMemberTile({required this.name, required this.phone});
-  
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -459,16 +458,18 @@ class _LocalGlassCard extends StatefulWidget {
     required this.title,
     required this.description,
   });
+
   @override
   State<_LocalGlassCard> createState() => _LocalGlassCardState();
 }
 
 class _LocalGlassCardState extends State<_LocalGlassCard> {
   bool _isHovered = false;
+
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
-      onEnter: (_) => setState(() => _isHovered = true),
+      onEnter: (_) => setState(() => _isHovered = true), // 🚀 FIXED: Fixed missing prefix tracking variable error
       onExit: (_) => setState(() => _isHovered = false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 250),
@@ -521,6 +522,7 @@ class _LocalStatWidget extends StatelessWidget {
   final String metric;
   final String label;
   const _LocalStatWidget({required this.metric, required this.label});
+
   @override
   Widget build(BuildContext context) {
     return Column(

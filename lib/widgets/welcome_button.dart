@@ -31,33 +31,36 @@ class _WelcomeButtonState extends State<WelcomeButton> {
         child: SizedBox(
           width: double.infinity,
           height: 52,
-          child: widget.isGradient
-              ? Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(26),
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF5E17EB), Color(0xFF00F0FF)],
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF00F0FF).withOpacity(_isHovered ? 0.4 : 0.2),
-                        blurRadius: _isHovered ? 12 : 6,
-                        offset: const Offset(0, 3),
-                      )
+          // 🚀 ADDED: Direct high-priority gesture responder wrapper
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.onPressed,
+            child: widget.isGradient
+                ? Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(26),
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF5E17EB), Color(0xFF00F0FF)],
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF00F0FF).withOpacity(_isHovered ? 0.4 : 0.2),
+                          blurRadius: _isHovered ? 12 : 6,
+                          offset: const Offset(0, 3),
+                        )
                     ],
                   ),
-                  child: ElevatedButton(
-                    onPressed: widget.onPressed,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.transparent,
-                      shadowColor: Colors.transparent,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
-                    ),
+                  child: Center(
                     child: Text(
                       widget.text,
-                      style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold, letterSpacing: 1),
+                      style: const TextStyle(
+                        color: Colors.white, 
+                        fontSize: 15, 
+                        fontWeight: FontWeight.bold, 
+                        letterSpacing: 1
+                      ),
                     ),
                   ),
                 )
@@ -80,6 +83,7 @@ class _WelcomeButtonState extends State<WelcomeButton> {
                     ),
                   ),
                 ),
+          ),
         ),
       ),
     );
