@@ -50,3 +50,9 @@ app.*.map.json
 .flutter-plugins-dependencies
 .packages
 build/
+
+
+# macOS
+.DS_Store
+._*
+.AppleDouble
