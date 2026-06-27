@@ -1,5 +1,8 @@
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'institution_setup_screen.dart';
+import 'admin_dashboard_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   final String selectedRole;
@@ -178,7 +181,30 @@ class _LoginScreenState extends State<LoginScreen>
       // Navigate to correct dashboard
       switch (dbRole) {
         case 'admin':
-          Navigator.pushReplacementNamed(context, '/admin_dashboard');
+          // Check if institution already set up
+          final institution = await supabase
+              .from('institutions')
+              .select()
+              .eq('admin_id', user.id)
+              .maybeSingle();
+
+          if (!mounted) return;
+
+          if (institution == null) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const InstitutionSetupScreen(),
+              ),
+            );
+          } else {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const AdminDashboardScreen(),
+              ),
+            );
+          }
           break;
         case 'student':
           Navigator.pushReplacementNamed(context, '/student_dashboard');
