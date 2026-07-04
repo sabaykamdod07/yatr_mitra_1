@@ -1,81 +1,180 @@
 import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
 import 'login_screen.dart';
 
-class RoleSelectionScreen extends StatelessWidget {
+class RoleSelectionScreen extends StatefulWidget {
   const RoleSelectionScreen({super.key});
 
+  @override
+  State<RoleSelectionScreen> createState() => _RoleSelectionScreenState();
+}
+
+class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
+  late VideoPlayerController _videoController;
+  bool _videoReady = false;
+
   final List<Map<String, dynamic>> roles = const [
-    {"name": "Student", "icon": Icons.school_rounded, "desc": "Track your daily commute"},
-    {"name": "Parent", "icon": Icons.family_restroom_rounded, "desc": "Monitor your child's safety"},
-    {"name": "Driver", "icon": Icons.directions_bus_rounded, "desc": "Manage your active route"},
-    {"name": "Faculty", "icon": Icons.badge_rounded, "desc": "Transit schedule updates"},
-    {"name": "Helpdesk", "icon": Icons.support_agent_rounded, "desc": "Input data & support users"},
-    {"name": "Admin", "icon": Icons.admin_panel_settings_rounded, "desc": "Full infrastructure control"},
+    {
+      "name": "Student",
+      "icon": Icons.school_rounded,
+      "desc": "Track your daily commute",
+      "color": Color(0xFF6C63FF),
+    },
+    {
+      "name": "Parent",
+      "icon": Icons.family_restroom_rounded,
+      "desc": "Monitor your child's safety",
+      "color": Color(0xFF00C9A7),
+    },
+    {
+      "name": "Driver",
+      "icon": Icons.directions_bus_rounded,
+      "desc": "Manage your active route",
+      "color": Color(0xFFFF6B6B),
+    },
+    {
+      "name": "Faculty",
+      "icon": Icons.badge_rounded,
+      "desc": "Transit schedule updates",
+      "color": Color(0xFFFFBE0B),
+    },
+    {
+      "name": "Helpdesk",
+      "icon": Icons.support_agent_rounded,
+      "desc": "Input data & support users",
+      "color": Color(0xFF4CC9F0),
+    },
+    {
+      "name": "Admin",
+      "icon": Icons.admin_panel_settings_rounded,
+      "desc": "Full infrastructure control",
+      "color": Color(0xFFFF9F1C),
+    },
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _initVideo();
+  }
+
+  Future<void> _initVideo() async {
+    _videoController = VideoPlayerController.asset(
+      'assets/images/role_bg.mp4',
+    );
+    await _videoController.initialize();
+    _videoController.setLooping(true);
+    _videoController.setVolume(0);
+    _videoController.play();
+    if (mounted) {
+      setState(() => _videoReady = true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _videoController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded,
-              color: Color(0xFF1E293B)),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              const SizedBox(height: 10),
-              const Text(
-                "Select Your Role",
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF1E293B),
-                  letterSpacing: -0.5,
+      backgroundColor: const Color(0xFF0A0E21),
+      body: Stack(
+        children: [
+          // Video background
+          if (_videoReady)
+            Positioned.fill(
+              child: FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: _videoController.value.size.width,
+                  height: _videoController.value.size.height,
+                  child: VideoPlayer(_videoController),
                 ),
               ),
-              const SizedBox(height: 6),
-              const Text(
-                "Choose an account profile to continue to the portal",
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Color(0xFF64748B),
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(height: 32),
-              Expanded(
-                child: GridView.builder(
-                  physics: const BouncingScrollPhysics(),
-                  gridDelegate:
-                      const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 250,
-                    mainAxisSpacing: 16,
-                    crossAxisSpacing: 16,
-                    childAspectRatio: 1.1,
-                  ),
-                  itemCount: roles.length,
-                  itemBuilder: (context, index) {
-                    return _RoleCard(
-                      name: roles[index]["name"],
-                      icon: roles[index]["icon"],
-                      description: roles[index]["desc"],
-                    );
-                  },
-                ),
-              ),
-            ],
+            ),
+
+          // Dark overlay
+          Positioned.fill(
+            child: Container(
+              color: Colors.black.withOpacity(0.65),
+            ),
           ),
-        ),
+
+          // Content
+          SafeArea(
+            child: Column(
+              children: [
+                // Back button + title
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20, vertical: 12),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(
+                            Icons.arrow_back_ios_new_rounded,
+                            color: Colors.white),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Yatra Mitra 🚍',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            Text(
+                              'Select your role to continue',
+                              style: TextStyle(
+                                color: Colors.white60,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Role cards grid
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: GridView.builder(
+                      physics: const BouncingScrollPhysics(),
+                      gridDelegate:
+                          const SliverGridDelegateWithMaxCrossAxisExtent(
+                        maxCrossAxisExtent: 220,
+                        mainAxisSpacing: 16,
+                        crossAxisSpacing: 16,
+                        childAspectRatio: 1.0,
+                      ),
+                      itemCount: roles.length,
+                      itemBuilder: (context, index) {
+                        return _RoleCard(
+                          name: roles[index]["name"],
+                          icon: roles[index]["icon"],
+                          description: roles[index]["desc"],
+                          color: roles[index]["color"],
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -85,11 +184,13 @@ class _RoleCard extends StatefulWidget {
   final String name;
   final IconData icon;
   final String description;
+  final Color color;
 
   const _RoleCard({
     required this.name,
     required this.icon,
     required this.description,
+    required this.color,
   });
 
   @override
@@ -115,8 +216,7 @@ class _RoleCardState extends State<_RoleCard> {
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) =>
-                    LoginScreen(selectedRole: widget.name),
+                builder: (_) => LoginScreen(selectedRole: widget.name),
               ),
             );
           },
@@ -124,52 +224,47 @@ class _RoleCardState extends State<_RoleCard> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: _isHovered
-                  ? Colors.white
-                  : const Color(0xFFEDF2F7).withOpacity(0.6),
+                  ? widget.color.withOpacity(0.25)
+                  : Colors.white.withOpacity(0.08),
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
                 color: _isHovered
-                    ? const Color(0xFFD97706)
-                    : Colors.black.withOpacity(0.03),
-                width: 2,
+                    ? widget.color
+                    : Colors.white.withOpacity(0.15),
+                width: 1.5,
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: _isHovered
-                      ? const Color(0xFFD97706).withOpacity(0.12)
-                      : Colors.black.withOpacity(0.01),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                )
-              ],
+              boxShadow: _isHovered
+                  ? [
+                      BoxShadow(
+                        color: widget.color.withOpacity(0.3),
+                        blurRadius: 16,
+                        offset: const Offset(0, 4),
+                      )
+                    ]
+                  : [],
             ),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Container(
-                  padding: const EdgeInsets.all(10),
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: _isHovered
-                        ? const Color(0xFFFEF3C7)
-                        : Colors.white,
+                    color: widget.color.withOpacity(0.2),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
                     widget.icon,
-                    color: _isHovered
-                        ? const Color(0xFFD97706)
-                        : const Color(0xFF475569),
-                    size: 26,
+                    color: _isHovered ? widget.color : Colors.white70,
+                    size: 28,
                   ),
                 ),
                 const SizedBox(height: 12),
                 Text(
                   widget.name,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1E293B),
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: _isHovered ? widget.color : Colors.white,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -178,11 +273,13 @@ class _RoleCardState extends State<_RoleCard> {
                   textAlign: TextAlign.center,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Color(0xFF64748B),
-                    fontWeight: FontWeight.w500,
-                    height: 1.2,
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: _isHovered
+                        ? Colors.white70
+                        : Colors.white38,
+                    fontWeight: FontWeight.w400,
+                    height: 1.3,
                   ),
                 ),
               ],
