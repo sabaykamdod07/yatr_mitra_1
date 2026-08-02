@@ -1,5 +1,5 @@
-
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:video_player/video_player.dart';
 import 'dart:ui';
 import '../widgets/welcome_button.dart';
@@ -66,7 +66,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> with TickerProviderStateM
             style: TextStyle(color: Color(0xFF1E293B), fontWeight: FontWeight.bold),
           ),
           content: const Text(
-            "Yatra Mitra represents the next generation of safe transit infrastructure. By fusing real-time telematics with rapid emergency routing tools, our software directly targets safety and access gaps to give women full environmental control over their daily journeys.",
+            "Yatra Mitra represents the next generation of safe transit infrastructure. By fusing real-time telematics with rapid emergency routing tools, our software directly targets safety and access gaps to give children full environmental control over their daily journeys.",
             style: TextStyle(color: Color(0xFF475569), height: 1.5),
           ),
           actions: [
@@ -116,21 +116,21 @@ class _WelcomeScreenState extends State<WelcomeScreen> with TickerProviderStateM
                 ),
               ),
               const SizedBox(height: 20),
-              const Text(
+              Text(
                 "Project Creators",
-                style: TextStyle(
+                style: GoogleFonts.questrial(
                   fontSize: 22,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF1E293B), 
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF1E293B),
                   letterSpacing: 1.2,
                 ),
               ),
               const SizedBox(height: 4),
-              const Text(
+              Text(
                 "The Innovators Behind Yatra Mitra",
-                style: TextStyle(
-                  color: Color(0xFFD97706), 
-                  fontSize: 13, 
+                style: GoogleFonts.questrial(
+                  color: const Color(0xFFD97706),
+                  fontSize: 13,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -219,7 +219,8 @@ class _WelcomeScreenState extends State<WelcomeScreen> with TickerProviderStateM
                       
                       const SectionTitle(
                         title: "YATRA MITRA",
-                        subtitle: "Smart Women's Travel Assistant",
+                        subtitle: "Smart Children's Travel Assistant",
+                        
                       ),
                       
                       SizedBox(height: size.height * 0.08),
@@ -235,14 +236,14 @@ class _WelcomeScreenState extends State<WelcomeScreen> with TickerProviderStateM
                               alignment: Alignment.center,
                               children: [
                                 Text(
-                                  "Empowering Women Through Safe Digital Transportation",
+                                  "Empowering Children Through Safe Digital Transportation",
                                   textAlign: TextAlign.center,
-                                  style: TextStyle(
+                                  style: GoogleFonts.unbounded(
                                     fontSize: 34,
                                     fontWeight: FontWeight.w900,
                                     letterSpacing: -0.5,
                                     height: 1.25,
-                                    fontFamily: 'sans-serif-condensed',
+                                  ).copyWith(
                                     foreground: Paint()
                                       ..style = PaintingStyle.stroke
                                       ..strokeWidth = 6
@@ -253,23 +254,22 @@ class _WelcomeScreenState extends State<WelcomeScreen> with TickerProviderStateM
                                     ],
                                   ),
                                 ),
-                                const Text(
-                                  "Empowering Women Through Safe Digital Transportation",
+                                Text(
+                                  "Empowering Children Through Safe Digital Transportation",
                                   textAlign: TextAlign.center,
-                                  style: TextStyle(
+                                  style: GoogleFonts.unbounded(
                                     fontSize: 34,
                                     fontWeight: FontWeight.w900,
                                     color: Colors.white,
                                     letterSpacing: -0.5,
                                     height: 1.25,
-                                    fontFamily: 'sans-serif-condensed',
                                   ),
                                 ),
                               ],
                             ),
                             const SizedBox(height: 24),
                             Text(
-                              "Yatra Mitra is an AI-powered platform designed to improve women's safety during travel by providing smart route assistance, emergency support, and digital accessibility.",
+                              "Yatra Mitra is an AI-powered platform designed to improve children's safety during travel by providing smart route assistance, emergency support, and digital accessibility.",
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 16,
@@ -301,13 +301,13 @@ class _WelcomeScreenState extends State<WelcomeScreen> with TickerProviderStateM
                             ),
                             _LocalGlassCard(
                               icon: Icons.shield_rounded,
-                              title: "Women Safety",
+                              title: "Children's Safety",
                               description: "Emergency assistance and secure travel.",
                             ),
                             _LocalGlassCard(
                               icon: Icons.phone_android_rounded,
                               title: "Digital Empowerment",
-                              description: "Helping women gain confidence through technology.",
+                              description: "Helping children gain confidence through technology.",
                             ),
                           ],
                         ),
@@ -321,7 +321,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> with TickerProviderStateM
                           runSpacing: 20,
                           alignment: WrapAlignment.center,
                           children: const [
-                            _LocalStatWidget(metric: "5000+", label: "Women Supported"),
+                            _LocalStatWidget(metric: "5000+", label: "Children Supported"),
                             _LocalStatWidget(metric: "100+", label: "Routes Active"),
                             _LocalStatWidget(metric: "24x7", label: "Emergency Help"),
                           ],
@@ -367,7 +367,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> with TickerProviderStateM
                       ),
                       const SizedBox(height: 40),
                       Text(
-                        "Made with ❤️ for Women's Safety",
+                        "Made with ❤️ for children's Safety",
                         style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 12),
                       ),
                     ],
@@ -469,7 +469,7 @@ class _LocalGlassCardState extends State<_LocalGlassCard> {
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
-      onEnter: (_) => setState(() => _isHovered = true), // 🚀 FIXED: Fixed missing prefix tracking variable error
+      onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 250),
@@ -501,12 +501,20 @@ class _LocalGlassCardState extends State<_LocalGlassCard> {
                   const SizedBox(height: 14),
                   Text(
                     widget.title,
-                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                    style: GoogleFonts.questrial(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   const SizedBox(height: 6),
                   Text(
                     widget.description,
-                    style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13, height: 1.3),
+                    style: GoogleFonts.questrial(
+                      color: Colors.white.withOpacity(0.6),
+                      fontSize: 13,
+                      height: 1.3,
+                    ),
                   ),
                 ],
               ),
@@ -530,17 +538,22 @@ class _LocalStatWidget extends StatelessWidget {
       children: [
         Text(
           metric,
-          style: const TextStyle(
+          style: GoogleFonts.questrial(
             fontSize: 28,
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w700,
             color: Colors.cyanAccent,
-            shadows: [Shadow(color: Colors.cyan, blurRadius: 8)],
+          ).copyWith(
+            shadows: const [Shadow(color: Colors.cyan, blurRadius: 8)],
           ),
         ),
         const SizedBox(height: 4),
         Text(
           label,
-          style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 13, fontWeight: FontWeight.w500),
+          style: GoogleFonts.questrial(
+            color: Colors.white.withOpacity(0.5),
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+          ),
         ),
       ],
     );

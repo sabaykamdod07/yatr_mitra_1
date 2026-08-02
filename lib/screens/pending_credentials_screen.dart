@@ -71,7 +71,7 @@ class _PendingCredentialsScreenState extends State<PendingCredentialsScreen> {
       final data = await _supabase
           .from('students')
           .select('''
-            id, student_name, usn, department, year, student_email, parent_email,
+            id, student_name, enrollment_no, department, year, student_email, parent_email,
             admission_date, credential_generated,
             buses(bus_name, bus_number), routes(route_name), stops(stop_name), boarding_point
           ''')
@@ -226,7 +226,7 @@ class _PendingCredentialsScreenState extends State<PendingCredentialsScreen> {
                             columns: const [
                               DataColumn(label: Text('')),
                               DataColumn(label: Text('Name')),
-                              DataColumn(label: Text('USN')),
+                              DataColumn(label: Text('Enrollment No')),
                               DataColumn(label: Text('Dept')),
                               DataColumn(label: Text('Year')),
                               DataColumn(label: Text('Student Email')),
@@ -266,7 +266,7 @@ class _PendingCredentialsScreenState extends State<PendingCredentialsScreen> {
                                     },
                                   )),
                                   DataCell(Text(student['student_name'] ?? '')),
-                                  DataCell(Text(student['usn'] ?? '')),
+                                  DataCell(Text(student['enrollment_no'] ?? '')),
                                   DataCell(Text(student['department'] ?? '')),
                                   DataCell(Text(student['year'] ?? '')),
                                   DataCell(Text(student['student_email'] ?? '—')),

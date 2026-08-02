@@ -1,17 +1,10 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:video_player/video_player.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'login_screen.dart';
 
-class RoleSelectionScreen extends StatefulWidget {
+class RoleSelectionScreen extends StatelessWidget {
   const RoleSelectionScreen({super.key});
-
-  @override
-  State<RoleSelectionScreen> createState() => _RoleSelectionScreenState();
-}
-
-class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
-  late VideoPlayerController _videoController;
-  bool _videoReady = false;
 
   final List<Map<String, dynamic>> roles = const [
     {
@@ -53,53 +46,47 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
   ];
 
   @override
-  void initState() {
-    super.initState();
-    _initVideo();
-  }
-
-  Future<void> _initVideo() async {
-    _videoController = VideoPlayerController.asset(
-      'assets/images/role_bg.mp4',
-    );
-    await _videoController.initialize();
-    _videoController.setLooping(true);
-    _videoController.setVolume(0);
-    _videoController.play();
-    if (mounted) {
-      setState(() => _videoReady = true);
-    }
-  }
-
-  @override
-  void dispose() {
-    _videoController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0A0E21),
       body: Stack(
         children: [
-          // Video background
-          if (_videoReady)
-            Positioned.fill(
-              child: FittedBox(
-                fit: BoxFit.cover,
-                child: SizedBox(
-                  width: _videoController.value.size.width,
-                  height: _videoController.value.size.height,
-                  child: VideoPlayer(_videoController),
+          // Static background image (replaces the old looping video).
+          // NOTE: the artwork has its own "Yatra Mitra" logo near the top,
+          // which would duplicate the header title below. We scale the
+          // image up and anchor the scale at the BOTTOM so the top of the
+          // frame (and that logo) gets pushed up and clipped away by
+          // ClipRect, leaving just the road/skyline illustration visible.
+          Positioned.fill(
+            child: ClipRect(
+              child: Transform.scale(
+                scale: 1.45,
+                alignment: Alignment.bottomCenter,
+                child: Image.asset(
+                  'assets/images/role_bg.png',
+                  fit: BoxFit.cover,
                 ),
               ),
             ),
+          ),
 
-          // Dark overlay
+          // Soft gradient overlay — keeps the header text and cards
+          // legible while still letting the illustration show through.
           Positioned.fill(
-            child: Container(
-              color: Colors.black.withOpacity(0.65),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.55),
+                    Colors.black.withOpacity(0.25),
+                    Colors.black.withOpacity(0.20),
+                    Colors.black.withOpacity(0.45),
+                  ],
+                  stops: const [0.0, 0.25, 0.6, 1.0],
+                ),
+              ),
             ),
           ),
 
@@ -119,23 +106,33 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                             color: Colors.white),
                         onPressed: () => Navigator.pop(context),
                       ),
-                      const Expanded(
+                      Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Yatra Mitra 🚍',
-                              style: TextStyle(
+                              'Yatra Mitra',
+                              style: GoogleFonts.plusJakartaSans(
                                 color: Colors.white,
-                                fontSize: 20,
+                                fontSize: 22,
                                 fontWeight: FontWeight.w800,
+                                letterSpacing: 0.2,
+                                shadows: const [
+                                  Shadow(
+                                    color: Colors.black45,
+                                    blurRadius: 8,
+                                    offset: Offset(0, 2),
+                                  ),
+                                ],
                               ),
                             ),
                             Text(
                               'Select your role to continue',
-                              style: TextStyle(
-                                color: Colors.white60,
+                              style: GoogleFonts.inter(
+                                color: Colors.white70,
                                 fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                letterSpacing: 0.1,
                               ),
                             ),
                           ],
@@ -220,69 +217,81 @@ class _RoleCardState extends State<_RoleCard> {
               ),
             );
           },
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: _isHovered
-                  ? widget.color.withOpacity(0.25)
-                  : Colors.white.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: _isHovered
-                    ? widget.color
-                    : Colors.white.withOpacity(0.15),
-                width: 1.5,
-              ),
-              boxShadow: _isHovered
-                  ? [
-                      BoxShadow(
-                        color: widget.color.withOpacity(0.3),
-                        blurRadius: 16,
-                        offset: const Offset(0, 4),
-                      )
-                    ]
-                  : [],
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: widget.color.withOpacity(0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    widget.icon,
-                    color: _isHovered ? widget.color : Colors.white70,
-                    size: 28,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  widget.name,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: _isHovered ? widget.color : Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  widget.description,
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 10,
+          child: ClipRRect(
+            // Frosted-glass card: a subtle blur behind a semi-transparent
+            // white fill reads clearly against the lighter background,
+            // instead of the low-opacity flat fill that used to blend
+            // into the dark overlay.
+            borderRadius: BorderRadius.circular(20),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: _isHovered
+                      ? widget.color.withOpacity(0.30)
+                      : Colors.white.withOpacity(0.16),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
                     color: _isHovered
-                        ? Colors.white70
-                        : Colors.white38,
-                    fontWeight: FontWeight.w400,
-                    height: 1.3,
+                        ? widget.color
+                        : Colors.white.withOpacity(0.30),
+                    width: 1.5,
                   ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _isHovered
+                          ? widget.color.withOpacity(0.35)
+                          : Colors.black.withOpacity(0.18),
+                      blurRadius: _isHovered ? 18 : 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
-              ],
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: widget.color.withOpacity(0.28),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        widget.icon,
+                        color: _isHovered ? widget.color : Colors.white,
+                        size: 28,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      widget.name,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.1,
+                        color: _isHovered ? widget.color : Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      widget.description,
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(
+                        fontSize: 10.5,
+                        color: _isHovered
+                            ? Colors.white.withOpacity(0.9)
+                            : Colors.white.withOpacity(0.75),
+                        fontWeight: FontWeight.w500,
+                        height: 1.35,
+                        letterSpacing: 0.05,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
