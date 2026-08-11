@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -45,6 +46,9 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
   String? _reviewingRegistrationId;
   bool? _reviewingWantsCustomStop;
   String? _reviewingCustomStopNote;
+  double? _reviewingCustomStopLat;
+  double? _reviewingCustomStopLng;
+  String _reviewingRole = 'student';
   // =============================================
 
   // ===== NEW: Announcements State =====
@@ -71,7 +75,7 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
   // ===== NEW: Registration Form URL Getter =====
   String get _registrationFormUrl {
     if (_currentInstitutionId == null) return '';
-    return 'https://your-project-id.web.app/?inst=$_currentInstitutionId';
+    return 'https://yatra-mitra-form-7c192.web.app/?inst=$_currentInstitutionId';
   }
 
   void _showRegistrationLinkDialog() {
@@ -154,10 +158,40 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
           schema: 'public',
           table: 'pending_enrollments',
           callback: (payload) {
-            if (mounted) _fetchPendingRegistrations();
+            if (!mounted) return;
+            if (payload.eventType == PostgresChangeEvent.insert) {
+              _showNewRegistrationPopup(payload.newRecord);
+            }
+            _fetchPendingRegistrations();
           },
         )
         .subscribe();
+  }
+
+  void _showNewRegistrationPopup(Map<String, dynamic> reg) {
+    if (!mounted) return;
+    final name = reg['student_name'] ?? 'Someone';
+    final roleLabel = (reg['role'] ?? 'student').toString() == 'faculty' ? 'Faculty' : 'Student';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('New $roleLabel registration from $name'),
+        backgroundColor: const Color(0xFF3B5BFF),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 8),
+        action: SnackBarAction(
+          label: 'Review',
+          textColor: Colors.white,
+          onPressed: () async {
+            await _fetchPendingRegistrations();
+            final match = _pendingRegistrations.firstWhere(
+              (r) => r['id'] == reg['id'],
+              orElse: () => reg,
+            );
+            if (mounted) _openFormModal(null, match);
+          },
+        ),
+      ),
+    );
   }
 
   // ===== NEW: Announcements Subscription =====
@@ -200,7 +234,7 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
     try {
       final data = await _supabase
           .from('pending_enrollments')
-          .select('*')
+          .select('*, stops(stop_name)')
           .eq('institution_id', _currentInstitutionId!)
           .eq('status', 'pending')
           .order('created_at', ascending: false);
@@ -355,14 +389,15 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                             itemCount: _pendingRegistrations.length,
                             itemBuilder: (context, index) {
                               final reg = _pendingRegistrations[index];
+                              final regRole = (reg['role'] ?? 'student').toString();
                               return ListTile(
                                 leading: Icon(
-                                  Icons.school_outlined,
+                                  regRole == 'faculty' ? Icons.badge_outlined : Icons.school_outlined,
                                   color: const Color(0xFF3B5BFF),
                                 ),
                                 title: Text(reg['student_name'] ?? ''),
                                 subtitle: Text(
-                                  'Student • ${reg['department'] ?? '—'}',
+                                  '${regRole == 'faculty' ? 'Faculty' : 'Student'} • ${reg['department'] ?? '—'}',
                                   style: const TextStyle(fontSize: 12),
                                 ),
                                 trailing: reg['wants_custom_stop'] == true
@@ -548,6 +583,12 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
     );
   }
 
+  String _generateEnrollmentNo() {
+    final now = DateTime.now();
+    final rand = (1000 + Random().nextInt(9000)).toString();
+    return 'STU${now.year}${now.month.toString().padLeft(2, '0')}$rand';
+  }
+
   String _capitalize(String? value) {
     if (value == null || value.trim().isEmpty) return '';
     return value.trim().split(' ').map((word) {
@@ -583,14 +624,21 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
     _reviewingRegistrationId = prefillFromRegistration?['id'];
     _reviewingWantsCustomStop = prefillFromRegistration?['wants_custom_stop'];
     _reviewingCustomStopNote = prefillFromRegistration?['custom_stop_note'];
+    _reviewingCustomStopLat = prefillFromRegistration?['custom_stop_lat'] != null
+        ? double.tryParse(prefillFromRegistration!['custom_stop_lat'].toString())
+        : null;
+    _reviewingCustomStopLng = prefillFromRegistration?['custom_stop_lng'] != null
+        ? double.tryParse(prefillFromRegistration!['custom_stop_lng'].toString())
+        : null;
+    _reviewingRole = prefillFromRegistration?['role'] ?? 'student';
     final reg = prefillFromRegistration;
     String rawFee = student?['fee_status'] ?? 'unpaid';
     String rawRelation = student?['parent_relation'] ?? reg?['parent_relation'] ?? 'father';
 
     _studentName = student?['student_name'] ?? reg?['student_name'] ?? '';
-    _usnCollegeId = student?['enrollment_no'] ?? '';
+    _usnCollegeId = student?['enrollment_no'] ?? _generateEnrollmentNo();
     _studentEmail = student?['student_email'] ?? reg?['student_email'] ?? '';
-    _studentPhone = student?['student_phone'] ?? '';
+    _studentPhone = student?['student_phone'] ?? reg?['student_phone'] ?? '';
     _studentDepartment = student?['department'] ?? reg?['department'] ?? '';
     _studentYear = student?['year'] ?? '1st Year';
     _studentType = 'College';
@@ -603,7 +651,10 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
 
     _parentEmail = student?['parent_email'] ?? reg?['parent_email'] ?? '';
     _parentPhone = student?['parent_phone'] ?? reg?['parent_phone'] ?? '';
-    _boardingPoint = student?['boarding_point'] ?? '';
+    _boardingPoint = student?['boarding_point'] ??
+        reg?['stops']?['stop_name'] ??
+        (reg?['wants_custom_stop'] == true ? (reg?['custom_stop_note'] ?? 'Custom stop requested') : '') ??
+        '';
 
     _feeStatus = ['Unpaid', 'Partial', 'Paid'].contains(_capitalize(rawFee))
         ? _capitalize(rawFee)
@@ -626,7 +677,9 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
             return AlertDialog(
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               title: Text(
-                _editingStudent != null ? 'Edit Profile' : 'New Enrollment',
+                _reviewingRole == 'faculty'
+                    ? (_editingStudent != null ? 'Edit Faculty' : 'New Faculty')
+                    : (_editingStudent != null ? 'Edit Profile' : 'New Enrollment'),
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Color(0xFF0F1B4C)),
               ),
               content: SizedBox(
@@ -638,59 +691,70 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         _sectionHeader('Core Info'),
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 10.0),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: ChoiceChip(
-                                  label: const Text('College'),
-                                  selected: _studentType == 'College',
-                                  onSelected: (_) => setModalState(() => _studentType = 'College'),
+                        if (_reviewingRole != 'faculty')
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 10.0),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: ChoiceChip(
+                                    label: const Text('College'),
+                                    selected: _studentType == 'College',
+                                    onSelected: (_) => setModalState(() => _studentType = 'College'),
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: ChoiceChip(
-                                  label: const Text('School'),
-                                  selected: _studentType == 'School',
-                                  onSelected: (_) => setModalState(() => _studentType = 'School'),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: ChoiceChip(
+                                    label: const Text('School'),
+                                    selected: _studentType == 'School',
+                                    onSelected: (_) => setModalState(() => _studentType = 'School'),
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
                         _buildInputField('Full Name', _studentName, (v) => _studentName = v!, required: true),
-                        _buildInputField('USN / ID Card', _usnCollegeId, (v) => _usnCollegeId = v!, required: true),
-                        _buildInputField('Email (optional if student has none)', _studentEmail, (v) => _studentEmail = v!, required: false, isEmail: true),
-                        _buildInputField('Phone Number', _studentPhone, (v) => _studentPhone = v!, required: true),
-                        if (_studentType == 'College') ...[
+                        _buildInputField(_reviewingRole == 'faculty' ? 'Employee ID' : 'USN / ID Card', _usnCollegeId, (v) => _usnCollegeId = v!, required: true),
+                        _buildInputField(
+                          _reviewingRole == 'faculty' ? 'Email' : 'Email (optional if student has none)',
+                          _studentEmail,
+                          (v) => _studentEmail = v!,
+                          required: _reviewingRole == 'faculty',
+                          isEmail: true,
+                        ),
+                        _buildInputField('Phone Number (optional)', _studentPhone, (v) => _studentPhone = v!, required: false),
+                        if (_reviewingRole == 'faculty') ...[
                           _buildInputField('Department', _studentDepartment, (v) => _studentDepartment = v!, required: true),
-                          _buildDropdownField('Class Year', _studentYear, ['1st Year', '2nd Year', '3rd Year', '4th Year'],
-                              (val) => setModalState(() => _studentYear = val!)),
                         ] else ...[
-                          _buildDropdownField(
-                            'Class',
-                            [
-                              'Nursery', 'LKG', 'UKG', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6',
-                              'Class 7', 'Class 8', 'Class 9', 'Class 10', 'Class 11', 'Class 12',
-                            ].contains(_studentYear) ? _studentYear : 'Nursery',
-                            [
-                              'Nursery', 'LKG', 'UKG', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6',
-                              'Class 7', 'Class 8', 'Class 9', 'Class 10', 'Class 11', 'Class 12',
-                            ],
-                            (val) => setModalState(() => _studentYear = val!),
-                          ),
-                          _buildInputField('Section (optional, e.g. A, B, C)', _studentDepartment, (v) => _studentDepartment = v!, required: false),
+                          if (_studentType == 'College') ...[
+                            _buildInputField('Department', _studentDepartment, (v) => _studentDepartment = v!, required: true),
+                            _buildDropdownField('Class Year', _studentYear, ['1st Year', '2nd Year', '3rd Year', '4th Year'],
+                                (val) => setModalState(() => _studentYear = val!)),
+                          ] else ...[
+                            _buildDropdownField(
+                              'Class',
+                              [
+                                'Nursery', 'LKG', 'UKG', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6',
+                                'Class 7', 'Class 8', 'Class 9', 'Class 10', 'Class 11', 'Class 12',
+                              ].contains(_studentYear) ? _studentYear : 'Nursery',
+                              [
+                                'Nursery', 'LKG', 'UKG', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6',
+                                'Class 7', 'Class 8', 'Class 9', 'Class 10', 'Class 11', 'Class 12',
+                              ],
+                              (val) => setModalState(() => _studentYear = val!),
+                            ),
+                            _buildInputField('Section (optional, e.g. A, B, C)', _studentDepartment, (v) => _studentDepartment = v!, required: false),
+                          ],
+                          _buildInputField('Admission Date (YYYY-MM-DD)', _dateOfAdmission, (v) => _dateOfAdmission = v!, required: true),
+                          const SizedBox(height: 8),
+                          _sectionHeader('Guardian Reference'),
+                          _buildInputField('Guardian Name', _parentName, (v) => _parentName = v!, required: true),
+                          _buildDropdownField('Relation', _parentRelation, ['Father', 'Mother', 'Guardian'],
+                              (val) => setModalState(() => _parentRelation = val!)),
+                          _buildInputField('Guardian Email (for credentials)', _parentEmail, (v) => _parentEmail = v!, required: true, isEmail: true),
+                          _buildInputField('Guardian Phone', _parentPhone, (v) => _parentPhone = v!, required: true),
                         ],
-                        _buildInputField('Admission Date (YYYY-MM-DD)', _dateOfAdmission, (v) => _dateOfAdmission = v!, required: true),
-                        const SizedBox(height: 8),
-                        _sectionHeader('Guardian Reference'),
-                        _buildInputField('Guardian Name', _parentName, (v) => _parentName = v!, required: true),
-                        _buildDropdownField('Relation', _parentRelation, ['Father', 'Mother', 'Guardian'],
-                            (val) => setModalState(() => _parentRelation = val!)),
-                        _buildInputField('Guardian Email (for credentials)', _parentEmail, (v) => _parentEmail = v!, required: true, isEmail: true),
-                        _buildInputField('Guardian Phone', _parentPhone, (v) => _parentPhone = v!, required: true),
                         const SizedBox(height: 8),
                         _sectionHeader('Logistics'),
                         Padding(
@@ -749,8 +813,9 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                               ],
                             ),
                           ),
-                        _buildDropdownField('Fee Status', _feeStatus, ['Unpaid', 'Partial', 'Paid'],
-                            (val) => setModalState(() => _feeStatus = val!)),
+                        if (_reviewingRole != 'faculty')
+                          _buildDropdownField('Fee Status', _feeStatus, ['Unpaid', 'Partial', 'Paid'],
+                              (val) => setModalState(() => _feeStatus = val!)),
                       ],
                     ),
                   ),
@@ -769,29 +834,51 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                   onPressed: () async {
                     if (_formKey.currentState!.validate()) {
                       _formKey.currentState!.save();
-                      final payload = {
-                        'institution_id': _currentInstitutionId,
-                        'student_name': _studentName,
-                        'enrollment_no': _usnCollegeId,
-                        'student_email': _studentEmail.trim().isEmpty ? null : _studentEmail.trim(),
-                        'student_phone': _studentPhone,
-                        'department': _studentDepartment,
-                        'year': _studentYear,
-                        'admission_date': _dateOfAdmission,
-                        'parent_name': _parentName,
-                        'parent_relation': _parentRelation.toLowerCase(),
-                        'parent_email': _parentEmail.trim(),
-                        'parent_phone': _parentPhone,
-                        'boarding_point': _boardingPoint.isEmpty ? null : _boardingPoint,
-                        'fee_status': _feeStatus.toLowerCase(),
-                      };
+
                       try {
-                        if (_editingStudent != null) {
-                          await _supabase.from('students').update(payload).eq('id', _editingStudent!['id']);
-                          _showSnack('Profile updated successfully', isError: false);
+                        if (_reviewingRole == 'faculty') {
+                          final facultyPayload = {
+                            'institution_id': _currentInstitutionId,
+                            'faculty_name': _studentName,
+                            'employee_id': _usnCollegeId.trim().isEmpty ? null : _usnCollegeId.trim(),
+                            'faculty_email': _studentEmail.trim(),
+                            'faculty_phone': _studentPhone,
+                            'department': _studentDepartment,
+                            'boarding_point': _boardingPoint.isEmpty ? null : _boardingPoint,
+                          };
+                          if (_editingStudent != null) {
+                            await _supabase.from('faculty').update(facultyPayload).eq('id', _editingStudent!['id']);
+                            _showSnack('Faculty profile updated successfully', isError: false);
+                          } else {
+                            await _supabase.from('faculty').insert([facultyPayload]);
+                            _showSnack('Faculty profile created successfully', isError: false);
+                          }
                         } else {
-                          await _supabase.from('students').insert([payload]);
-                          _showSnack('Profile created successfully', isError: false);
+                          final payload = {
+                            'institution_id': _currentInstitutionId,
+                            'student_name': _studentName,
+                            'enrollment_no': _usnCollegeId,
+                            'student_email': _studentEmail.trim().isEmpty ? null : _studentEmail.trim(),
+                            'student_phone': _studentPhone,
+                            'department': _studentDepartment,
+                            'year': _studentYear,
+                            'admission_date': _dateOfAdmission,
+                            'parent_name': _parentName,
+                            'parent_relation': _parentRelation.toLowerCase(),
+                            'parent_email': _parentEmail.trim(),
+                            'parent_phone': _parentPhone,
+                            'boarding_point': _boardingPoint.isEmpty ? null : _boardingPoint,
+                            'fee_status': _feeStatus.toLowerCase(),
+                            'route_id': reg?['suggested_route_id'] ?? _editingStudent?['route_id'],
+                            'stop_id': reg?['suggested_stop_id'] ?? _editingStudent?['stop_id'],
+                          };
+                          if (_editingStudent != null) {
+                            await _supabase.from('students').update(payload).eq('id', _editingStudent!['id']);
+                            _showSnack('Profile updated successfully', isError: false);
+                          } else {
+                            await _supabase.from('students').insert([payload]);
+                            _showSnack('Profile created successfully', isError: false);
+                          }
                         }
 
                         if (_reviewingRegistrationId != null) {
@@ -800,12 +887,17 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                               'institution_id': _currentInstitutionId,
                               'requested_boarding_point': _reviewingCustomStopNote ?? 'Custom stop requested by student',
                               'status': 'pending',
+                              'custom_stop_lat': _reviewingCustomStopLat,
+                              'custom_stop_lng': _reviewingCustomStopLng,
                             });
                           }
                           await _supabase.from('pending_enrollments').delete().eq('id', _reviewingRegistrationId!);
                           _reviewingRegistrationId = null;
                           _reviewingWantsCustomStop = null;
                           _reviewingCustomStopNote = null;
+                          _reviewingCustomStopLat = null;
+                          _reviewingCustomStopLng = null;
+                          _reviewingRole = 'student';
                         }
 
                         if (context.mounted) Navigator.pop(context);

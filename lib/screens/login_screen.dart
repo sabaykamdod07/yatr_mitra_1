@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'institution_setup_screen.dart';
 import 'admin_dashboard_screen.dart';
 import 'helpdesk_management_screen.dart'; // MATCHED: Your exact file name
+import 'student_dashboard_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   final String selectedRole;
@@ -138,7 +139,10 @@ class _LoginScreenState extends State<LoginScreen> {
             .eq('id', user.id)
             .single();
 
-        final role = userData['role'];
+        // Normalize in case role was ever stored with different casing
+        // (e.g. 'Student' vs 'student') so the branches below don't
+        // silently fall through to the generic snackbar.
+        final role = (userData['role'] as String?)?.toLowerCase().trim();
         _showSnack('Welcome back!', isError: false);
 
         if (mounted) {
@@ -174,6 +178,13 @@ class _LoginScreenState extends State<LoginScreen> {
             Navigator.of(context).pushAndRemoveUntil(
               MaterialPageRoute(
                 builder: (context) => const HelpDeskDashboard(), // Connected to your widget view
+              ),
+              (route) => false,
+            );
+          } else if (role == 'student') {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(
+                builder: (context) => const StudentDashboardScreen(),
               ),
               (route) => false,
             );

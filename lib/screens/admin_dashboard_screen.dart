@@ -74,7 +74,7 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
       final requestsData = await _supabase
           .from('route_requests')
           .select(
-              'id, requested_boarding_point, created_at, status, requested_by, institution_id')
+              'id, requested_boarding_point, created_at, status, requested_by, institution_id, custom_stop_lat, custom_stop_lng')
           .eq('institution_id', institutionId)
           .eq('status', 'pending')
           .order('created_at', ascending: true);
@@ -444,6 +444,10 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           'route_id': finalRouteId,
                           'stop_name': request['requested_boarding_point'],
                           'timing': timingController.text.trim(),
+                          if (request['custom_stop_lat'] != null)
+                            'lat': request['custom_stop_lat'],
+                          if (request['custom_stop_lng'] != null)
+                            'lng': request['custom_stop_lng'],
                         });
                         await _supabase
                             .from('route_requests')

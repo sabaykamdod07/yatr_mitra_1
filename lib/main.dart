@@ -1,16 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:device_preview/device_preview.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
 import 'screens/animated_splash_screen.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/helpdesk_management_screen.dart'; // MATCHED: Your exact file name
+import 'screens/student_dashboard_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  await dotenv.load(fileName: '.env');
+
   await Supabase.initialize(
-    url: 'https://itkplcmlvweggsriwzqq.supabase.co',
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml0a3BsY21sdndlZ2dzcml3enFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0Mzk4MTMsImV4cCI6MjA5ODAxNTgxM30.p8ACzNXs9pmNVRGhPHzhe1ZjMRY7ABwdU8E9FL3x1tQ',
+    url: dotenv.env['SUPABASE_URL']!,
+    anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
   );
 
   runApp(
@@ -38,9 +43,7 @@ class MyApp extends StatelessWidget {
       routes: {
         '/admin_dashboard': (context) => const AdminDashboardScreen(),
         '/helpdesk_dashboard': (context) => const HelpDeskDashboard(), // UPDATED: Points to your widget
-        '/student_dashboard': (context) => const Scaffold(
-          body: Center(child: Text('Student Dashboard Coming Soon!')),
-        ),
+        '/student_dashboard': (context) => const StudentDashboardScreen(),
         '/parent_dashboard': (context) => const Scaffold(
           body: Center(child: Text('Parent Dashboard Coming Soon!')),
         ),

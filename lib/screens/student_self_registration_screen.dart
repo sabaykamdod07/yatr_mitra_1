@@ -22,6 +22,7 @@ class _StudentSelfRegistrationScreenState extends State<StudentSelfRegistrationS
   String _admissionDate = '';
   String _department = '';
   String _employeeId = '';
+  String _studentPhone = '';
   String _parentName = '';
   String _parentRelation = 'Father';
   String _parentEmail = '';
@@ -189,10 +190,12 @@ class _StudentSelfRegistrationScreenState extends State<StudentSelfRegistrationS
         try {
           await _supabase.from('route_requests').insert({
             'institution_id': _institutionId,
-            'requested_boarding_point': _customStopNote.trim().isEmpty ? 
+            'requested_boarding_point': _customStopNote.trim().isEmpty ?
               'Custom location (${_customStopLocation!.latitude.toStringAsFixed(4)}, ${_customStopLocation!.longitude.toStringAsFixed(4)})' :
               _customStopNote.trim(),
             'status': 'pending',
+            'custom_stop_lat': _customStopLocation!.latitude,
+            'custom_stop_lng': _customStopLocation!.longitude,
           });
 
           await _supabase.from('notifications').insert({
@@ -211,6 +214,7 @@ class _StudentSelfRegistrationScreenState extends State<StudentSelfRegistrationS
         'role': _role,
         'student_name': _studentName,
         'student_email': _studentEmail.trim().isEmpty ? null : _studentEmail.trim(),
+        'student_phone': _studentPhone.trim().isEmpty ? null : _studentPhone.trim(),
         'admission_date': _role == 'student' && _admissionDate.trim().isNotEmpty ? _admissionDate.trim() : null,
         'department': _department.trim().isEmpty ? null : _department.trim(),
         'employee_id': _role == 'faculty' ? _employeeId.trim() : null,
@@ -262,6 +266,63 @@ class _StudentSelfRegistrationScreenState extends State<StudentSelfRegistrationS
     }
   }
 
+  Widget _roleToggleButton(String label, String value) {
+    final isSelected = _role == value;
+    return GestureDetector(
+      onTap: () => setState(() => _role = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF3B5BFF) : Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: isSelected ? const Color(0xFF3B5BFF) : const Color(0xFFE2E8F0)),
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            color: isSelected ? Colors.white : const Color(0xFF0F1B4C),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _labeledField(
+    String label, {
+    required FormFieldSetter<String> onSaved,
+    bool required = false,
+    bool isEmail = false,
+    TextInputType keyboardType = TextInputType.text,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF6B7A99))),
+        const SizedBox(height: 4),
+        TextFormField(
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+          ),
+          keyboardType: keyboardType,
+          validator: (v) {
+            if (required && (v == null || v.trim().isEmpty)) return 'Required';
+            if (isEmail && v != null && v.trim().isNotEmpty) {
+              final emailPattern = RegExp(r'^[\w.\-]+@[\w\-]+(\.[\w\-]+)+$');
+              if (!emailPattern.hasMatch(v.trim())) return 'Enter a valid email';
+            }
+            return null;
+          },
+          onSaved: onSaved,
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -275,33 +336,111 @@ class _StudentSelfRegistrationScreenState extends State<StudentSelfRegistrationS
               children: [
                 const SizedBox(height: 20),
                 const Text('New Registration', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                const Text('Yatra Mitra — New Registration', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0F1B4C))),
+                const SizedBox(height: 6),
+                const Text(
+                  'Fill this form and our help desk will contact you to complete enrollment.',
+                  style: TextStyle(fontSize: 13, color: Color(0xFF6B7A99)),
+                ),
                 const SizedBox(height: 24),
 
-                const Text('Name', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF6B7A99))),
-                TextFormField(
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: Colors.white,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-                  ),
-                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+                const Text('I AM REGISTERING AS', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF3B5BFF), letterSpacing: 0.5)),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(child: _roleToggleButton('Student', 'student')),
+                    const SizedBox(width: 12),
+                    Expanded(child: _roleToggleButton('Faculty', 'faculty')),
+                  ],
+                ),
+                const SizedBox(height: 20),
+
+                _labeledField(
+                  _role == 'faculty' ? 'Full Name' : 'Student Full Name',
+                  required: true,
                   onSaved: (v) => _studentName = v ?? '',
                 ),
                 const SizedBox(height: 14),
 
-                const Text('Email', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF6B7A99))),
-                TextFormField(
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: Colors.white,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-                  ),
+                _labeledField(
+                  _role == 'faculty' ? 'Email (optional)' : 'Student Email (optional)',
                   keyboardType: TextInputType.emailAddress,
                   onSaved: (v) => _studentEmail = v ?? '',
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 14),
+
+                _labeledField(
+                  'Phone Number (optional)',
+                  keyboardType: TextInputType.phone,
+                  onSaved: (v) => _studentPhone = v ?? '',
+                ),
+                const SizedBox(height: 14),
+
+                _labeledField(
+                  'Section / Department (optional)',
+                  onSaved: (v) => _department = v ?? '',
+                ),
+                const SizedBox(height: 14),
+
+                if (_role == 'faculty') ...[
+                  _labeledField(
+                    'Employee ID',
+                    onSaved: (v) => _employeeId = v ?? '',
+                  ),
+                  const SizedBox(height: 14),
+                ] else ...[
+                  _labeledField(
+                    'Admission Date (YYYY-MM-DD, optional)',
+                    onSaved: (v) => _admissionDate = v ?? '',
+                  ),
+                  const SizedBox(height: 20),
+
+                  const Text('PARENT / GUARDIAN DETAILS', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF3B5BFF), letterSpacing: 0.5)),
+                  const SizedBox(height: 10),
+
+                  _labeledField(
+                    'Parent/Guardian Name',
+                    required: true,
+                    onSaved: (v) => _parentName = v ?? '',
+                  ),
+                  const SizedBox(height: 14),
+
+                  const Text('Relation', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF6B7A99))),
+                  const SizedBox(height: 4),
+                  DropdownButtonFormField<String>(
+                    value: _parentRelation,
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+                    ),
+                    items: ['Father', 'Mother', 'Guardian']
+                        .map((r) => DropdownMenuItem(value: r, child: Text(r)))
+                        .toList(),
+                    onChanged: (v) => setState(() => _parentRelation = v ?? 'Father'),
+                  ),
+                  const SizedBox(height: 14),
+
+                  _labeledField(
+                    'Parent Email (credentials will be sent here)',
+                    required: true,
+                    isEmail: true,
+                    keyboardType: TextInputType.emailAddress,
+                    onSaved: (v) => _parentEmail = v ?? '',
+                  ),
+                  const SizedBox(height: 14),
+
+                  _labeledField(
+                    'Parent Phone Number',
+                    required: true,
+                    keyboardType: TextInputType.phone,
+                    onSaved: (v) => _parentPhone = v ?? '',
+                  ),
+                  const SizedBox(height: 14),
+                ],
+                const SizedBox(height: 6),
 
                 const Text('BOARDING LOCATION', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF3B5BFF), letterSpacing: 0.5)),
                 const SizedBox(height: 10),

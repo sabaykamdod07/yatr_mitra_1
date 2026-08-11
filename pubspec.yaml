@@ -22,6 +22,7 @@ dependencies:
   latlong2: ^0.10.1
   http: ^1.6.0
   url_strategy: ^0.3.0
+  flutter_dotenv: ^6.0.1
 
 dev_dependencies:
   flutter_test:
@@ -32,3 +33,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
+    - .env
