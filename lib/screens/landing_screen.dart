@@ -1,10 +1,7 @@
 import 'package:flutter/material.dart';
 import '../config/app_colors.dart';
 import '../widgets/landing_content.dart';
-<<<<<<< HEAD
 import 'welcome_screen.dart';
-=======
->>>>>>> 3534e475c09ebf20b66ba6a27b1ee91fd98c5a5a
 
 class LandingScreen extends StatelessWidget {
   const LandingScreen({super.key});
@@ -32,7 +29,6 @@ class LandingScreen extends StatelessWidget {
                 width: double.infinity,
                 height: 56,
                 child: ElevatedButton(
-<<<<<<< HEAD
                   onPressed: () {
                     // =========================================================
                     // 🚀 NAVIGATION TRIGGER WIRING
@@ -48,9 +44,6 @@ class LandingScreen extends StatelessWidget {
                       ),
                     );
                   },
-=======
-                  onPressed: () {},
->>>>>>> 3534e475c09ebf20b66ba6a27b1ee91fd98c5a5a
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.accentYellow,
                     foregroundColor: AppColors.primaryBlue,

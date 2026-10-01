@@ -35,6 +35,7 @@ class _StudentSelfRegistrationScreenState extends State<StudentSelfRegistrationS
   bool _wantsCustomStop = false;
   LatLng? _customStopLocation;
   String _customStopNote = '';
+  final TextEditingController _customStopNoteController = TextEditingController();
 
   bool _isLoadingStops = true;
   bool _isSubmitting = false;
@@ -44,6 +45,12 @@ class _StudentSelfRegistrationScreenState extends State<StudentSelfRegistrationS
   void initState() {
     super.initState();
     _loadStops();
+  }
+
+  @override
+  void dispose() {
+    _customStopNoteController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadStops() async {
@@ -104,7 +111,7 @@ class _StudentSelfRegistrationScreenState extends State<StudentSelfRegistrationS
 
   void _computeNearbyStops() {
     debugPrint('🔍 Computing. Home: $_homeLocation, Stops: ${_allStops.length}');
-    
+
     if (_homeLocation == null || _allStops.isEmpty) {
       debugPrint('❌ Cannot compute');
       return;
@@ -123,11 +130,14 @@ class _StudentSelfRegistrationScreenState extends State<StudentSelfRegistrationS
     withDistance.sort((a, b) => (a['distance'] as double).compareTo(b['distance'] as double));
 
     setState(() {
-      _nearbyStops = withDistance.take(5).toList();
+      // Show every predefined stop that exists for this institution, sorted
+      // nearest-first, instead of arbitrarily cutting the list to 5 — the
+      // student should be able to see (and pick) any stop on any route.
+      _nearbyStops = withDistance;
       _selectedStop = null;
       _wantsCustomStop = false;
     });
-    
+
     debugPrint('✅ Nearby stops computed: ${_nearbyStops.length}');
   }
 
@@ -153,7 +163,7 @@ class _StudentSelfRegistrationScreenState extends State<StudentSelfRegistrationS
       context,
       MaterialPageRoute(
         builder: (_) => MapPickerScreen(
-          initialLocation: _homeLocation,
+          initialLocation: _customStopLocation ?? _homeLocation,
           title: 'Tap Your Preferred Boarding Point',
         ),
       ),
@@ -165,6 +175,15 @@ class _StudentSelfRegistrationScreenState extends State<StudentSelfRegistrationS
         _selectedStop = null;
       });
     }
+  }
+
+  void _cancelCustomStopRequest() {
+    setState(() {
+      _wantsCustomStop = false;
+      _customStopLocation = null;
+      _customStopNote = '';
+      _customStopNoteController.clear();
+    });
   }
 
   Future<void> _submit() async {
@@ -183,11 +202,22 @@ class _StudentSelfRegistrationScreenState extends State<StudentSelfRegistrationS
       );
       return;
     }
+    if (_wantsCustomStop && _customStopLocation == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please tap a location on the map for your requested stop.'), backgroundColor: Colors.redAccent),
+      );
+      return;
+    }
 
     setState(() => _isSubmitting = true);
     try {
       if (_wantsCustomStop && _customStopLocation != null) {
         try {
+          // This creates the request that the ADMIN sees directly in their
+          // "Pending Route Requests" notification bell (route_requests table,
+          // status = pending). The Help Desk also sees it flagged (📍 icon)
+          // on this same student's entry in "Pending Registrations", so both
+          // sides are aware of the request without duplicating it.
           await _supabase.from('route_requests').insert({
             'institution_id': _institutionId,
             'requested_boarding_point': _customStopNote.trim().isEmpty ?
@@ -461,54 +491,165 @@ class _StudentSelfRegistrationScreenState extends State<StudentSelfRegistrationS
                     child: Center(child: CircularProgressIndicator()),
                   ),
 
-                if (_homeLocation != null && !_isLoadingStops && _nearbyStops.isNotEmpty) ...[
+                if (_homeLocation != null && !_isLoadingStops) ...[
                   const SizedBox(height: 16),
-                  const Text('Nearest available stops:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  ..._nearbyStops.map((stop) {
-                    final isSelected = _selectedStop != null && _selectedStop!['id'] == stop['id'];
-                    final distance = (stop['distance'] as double).toStringAsFixed(2);
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(10),
-                        onTap: () => setState(() {
-                          _selectedStop = stop;
-                          _wantsCustomStop = false;
-                        }),
-                        child: Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: isSelected ? const Color(0xFFEEF2FF) : Colors.white,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: isSelected ? const Color(0xFF3B5BFF) : const Color(0xFFE2E8F0)),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                                color: isSelected ? const Color(0xFF3B5BFF) : Colors.grey,
-                                size: 20,
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(stop['stop_name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                                    Text(
-                                      '$distance km away',
-                                      style: const TextStyle(fontSize: 11, color: Color(0xFF8892AA)),
-                                    ),
-                                  ],
+
+                  // ── Every predefined stop for this institution, nearest
+                  // first — no longer capped to 5, so a student can see and
+                  // pick any stop on any route. ──
+                  if (_nearbyStops.isNotEmpty) ...[
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Nearest available stops:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                        Text(
+                          '${_nearbyStops.length} found',
+                          style: const TextStyle(fontSize: 11, color: Color(0xFF8892AA)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ..._nearbyStops.map((stop) {
+                      final isSelected = _selectedStop != null && _selectedStop!['id'] == stop['id'];
+                      final distance = (stop['distance'] as double).toStringAsFixed(2);
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(10),
+                          onTap: () => setState(() {
+                            _selectedStop = stop;
+                            _wantsCustomStop = false;
+                          }),
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: isSelected ? const Color(0xFFEEF2FF) : Colors.white,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: isSelected ? const Color(0xFF3B5BFF) : const Color(0xFFE2E8F0)),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                                  color: isSelected ? const Color(0xFF3B5BFF) : Colors.grey,
+                                  size: 20,
                                 ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(stop['stop_name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                      Text(
+                                        '$distance km away',
+                                        style: const TextStyle(fontSize: 11, color: Color(0xFF8892AA)),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  ] else ...[
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade50,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.amber.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline_rounded, color: Colors.amber.shade800, size: 18),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text(
+                              'No predefined stops found yet. You can request a new stop below.',
+                              style: TextStyle(fontSize: 12, color: Colors.black87),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  const SizedBox(height: 18),
+                  const Divider(),
+                  const SizedBox(height: 12),
+
+                  // ── "Request a different stop" — lets the student pick a
+                  // location that isn't on any existing route yet. This goes
+                  // to the admin's Pending Route Requests for approval; the
+                  // help desk also sees it flagged on this registration. ──
+                  if (!_wantsCustomStop) ...[
+                    const Text("Don't see your stop nearby?", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: _pickCustomStopLocation,
+                      icon: const Icon(Icons.add_location_alt_outlined, size: 18),
+                      label: const Text('Request a Different Stop'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        foregroundColor: const Color(0xFFD97706),
+                        side: const BorderSide(color: Color(0xFFD97706)),
+                      ),
+                    ),
+                  ] else ...[
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEEF2FF),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFF3B5BFF)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.location_on, color: Color(0xFF3B5BFF), size: 18),
+                              const SizedBox(width: 6),
+                              const Expanded(
+                                child: Text(
+                                  'Custom stop location selected',
+                                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: Color(0xFF0F1B4C)),
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: _pickCustomStopLocation,
+                                child: const Text('Change', style: TextStyle(fontSize: 12)),
                               ),
                             ],
                           ),
-                        ),
+                          const SizedBox(height: 10),
+                          TextFormField(
+                            controller: _customStopNoteController,
+                            decoration: InputDecoration(
+                              labelText: 'Describe the location (optional)',
+                              hintText: 'e.g. Near XYZ landmark, bus stand',
+                              filled: true,
+                              fillColor: Colors.white,
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                            onChanged: (val) => _customStopNote = val,
+                          ),
+                          const SizedBox(height: 4),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton(
+                              onPressed: _cancelCustomStopRequest,
+                              style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+                              child: const Text('Cancel — choose from list instead', style: TextStyle(fontSize: 12)),
+                            ),
+                          ),
+                        ],
                       ),
-                    );
-                  }),
+                    ),
+                  ],
                 ],
 
                 const SizedBox(height: 28),

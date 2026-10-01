@@ -285,7 +285,7 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                           final createdAt = createdAtRaw.length >= 16
                               ? createdAtRaw.substring(0, 16).replaceFirst('T', ' ')
                               : createdAtRaw;
-                          
+
                           return Container(
                             margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                             padding: const EdgeInsets.all(14),
@@ -882,15 +882,15 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                         }
 
                         if (_reviewingRegistrationId != null) {
-                          if (_reviewingWantsCustomStop == true) {
-                            await _supabase.from('route_requests').insert({
-                              'institution_id': _currentInstitutionId,
-                              'requested_boarding_point': _reviewingCustomStopNote ?? 'Custom stop requested by student',
-                              'status': 'pending',
-                              'custom_stop_lat': _reviewingCustomStopLat,
-                              'custom_stop_lng': _reviewingCustomStopLng,
-                            });
-                          }
+                          // NOTE: no route_requests insert here anymore. When
+                          // the student originally submitted this form with
+                          // "wants_custom_stop" set, the self-registration
+                          // screen already created the pending route_requests
+                          // row (with the custom lat/lng) at submission time —
+                          // it's already sitting in the admin's Pending Route
+                          // Requests list. Re-inserting it here on approval
+                          // was creating a second, duplicate request for the
+                          // same stop.
                           await _supabase.from('pending_enrollments').delete().eq('id', _reviewingRegistrationId!);
                           _reviewingRegistrationId = null;
                           _reviewingWantsCustomStop = null;
