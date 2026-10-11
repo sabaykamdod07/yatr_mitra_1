@@ -5,6 +5,10 @@ import 'institution_setup_screen.dart';
 import 'admin_dashboard_screen.dart';
 import 'helpdesk_management_screen.dart'; // MATCHED: Your exact file name
 import 'student_dashboard_screen.dart';
+import 'driver_dashboard_screen.dart';
+import 'parent_dashboard_screen.dart';
+import 'faculty_dashboard_screen.dart';
+import 'forgot_password_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   final String selectedRole;
@@ -48,6 +52,7 @@ class _LoginScreenState extends State<LoginScreen> {
   String get _roleEmoji {
     switch (widget.selectedRole) {
       case 'Student': return '🎓';
+      case 'Parent': return '👪';
       case 'Faculty': return '🧑‍🏫';
       case 'Admin': return '🛡️';
       case 'Help Desk': return '🎧';
@@ -59,6 +64,7 @@ class _LoginScreenState extends State<LoginScreen> {
   String get _roleValue {
     switch (widget.selectedRole) {
       case 'Student': return 'student';
+      case 'Parent': return 'parent';
       case 'Faculty': return 'faculty';
       case 'Admin': return 'admin';
       case 'Help Desk': return 'help_desk';
@@ -110,7 +116,7 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       _showSnack('Something went wrong. Try again.');
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -135,9 +141,16 @@ class _LoginScreenState extends State<LoginScreen> {
       if (user != null) {
         final userData = await supabase
             .from('users')
-            .select('role')
+            .select('role, is_active')
             .eq('id', user.id)
             .single();
+
+        // a deactivated account (for example a driver who has left) cannot log in
+        if (userData['is_active'] == false) {
+          await supabase.auth.signOut();
+          _showSnack('This account has been deactivated. Please contact the admin.');
+          return;
+        }
 
         // Normalize in case role was ever stored with different casing
         // (e.g. 'Student' vs 'student') so the branches below don't
@@ -188,6 +201,27 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               (route) => false,
             );
+          } else if (role == 'driver') {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(
+                builder: (context) => const DriverDashboardScreen(),
+              ),
+              (route) => false,
+            );
+          } else if (role == 'faculty') {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(
+                builder: (context) => const FacultyDashboardScreen(),
+              ),
+              (route) => false,
+            );
+          } else if (role == 'parent') {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(
+                builder: (context) => const ParentDashboardScreen(),
+              ),
+              (route) => false,
+            );
           } else {
             _showSnack('Dashboard for role "$role" is under development.', isError: false);
           }
@@ -198,7 +232,7 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       _showSnack('Something went wrong. Try again.');
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -352,7 +386,12 @@ class _LoginScreenState extends State<LoginScreen> {
                         Align(
                           alignment: Alignment.centerRight,
                           child: GestureDetector(
-                            onTap: () {},
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => ForgotPasswordScreen(
+                                    initialEmail: _emailController.text.trim()),
+                              ),
+                            ),
                             child: Text(
                               'Forgot password?',
                               style: GoogleFonts.inter(

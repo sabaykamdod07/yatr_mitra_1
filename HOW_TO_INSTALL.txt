@@ -1,0 +1,12 @@
+YATRA MITRA - NEW LOGO
+
+Copy the folders in this pack INTO your project folder (yatra_mitra-main),
+and let them REPLACE the files with the same names:
+
+  assets/images/yatra_logo.png          the logo used inside the app
+  android/app/src/main/res/...          the Android app icon (classic + adaptive)
+  ios/Runner/Assets.xcassets/...        the iOS app icon
+  web/favicon.png, web/icons/...        the browser tab icon and the web app icons
+
+Then stop the app and run it again (a hot reload does not pick up icons).
+For the registration form on Firebase, build and deploy it again.

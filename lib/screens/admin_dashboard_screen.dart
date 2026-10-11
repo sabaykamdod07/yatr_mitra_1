@@ -2,12 +2,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:csv/csv.dart';
+import 'package:iconsax/iconsax.dart';
 import 'package:latlong2/latlong.dart';
 import 'pending_credentials_screen.dart';
 import 'role_selection_screen.dart';
 import 'map_picker_screen.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:web/web.dart' as web;
+import 'admin_drivers_tab.dart';
+import 'admin_fees_screen.dart';
+import 'admin_alerts_screen.dart';
+import 'admin_buses_screen.dart';
+import 'inbox_screen.dart';
+import 'admin_attendance_screen.dart';
+import 'admin_reports_screen.dart';
+import '../widgets/account_sheet.dart';
+import '../widgets/link_rfid_sheet.dart';
+import '../theme/ym_ui.dart';
+
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -29,6 +41,8 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int _totalRoutes = 0;
   int _totalDrivers = 0;
   int _helpdeskCount = 0;
+  int _tripsToday = 0; // trips completed today
+  int _tripsRunning = 0; // trips running right now
   int _pendingCredentials = 0;
   bool _isLoadingStats = true;
 
@@ -103,7 +117,7 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
       if (_institutionId == null) return;
       final buses = await _supabase
           .from('buses')
-          .select('id, bus_number, route_id')
+          .select('id, bus_number')
           .eq('institution_id', _institutionId!);
       setState(() {
         _buses = List<Map<String, dynamic>>.from(buses);
@@ -182,13 +196,44 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
             .eq('institution_id', institutionId)
             .eq('credential_generated', false);
 
+        // a deactivated driver is not counted
+        final drivers = await _supabase
+          .from('drivers')
+          .select('id')
+          .eq('institution_id', institutionId)
+          .or('is_active.is.null,is_active.eq.true');
+
+        // trips that started today (the admin's own day, midnight to midnight)
+        var tripsDone = 0;
+        var tripsRun = 0;
+        try {
+          final now = DateTime.now();
+          final dayStart = DateTime(now.year, now.month, now.day).toUtc();
+          final todays = await _supabase
+              .from('trips')
+              .select('status')
+              .eq('institution_id', institutionId)
+              .gte('started_at', dayStart.toIso8601String());
+          for (final t in todays) {
+            final st = (t['status'] ?? '').toString();
+            if (st == 'completed') tripsDone++;
+            if (st == 'in_progress') tripsRun++;
+          }
+        } catch (_) {
+          // if trips cannot be read, the card simply shows 0
+        }
+
         setState(() {
-          _totalStudents = (students as List).length;
-          _totalBuses = (buses as List).length;
-          _totalRoutes = (routes as List).length;
-          _helpdeskCount = (helpdesks as List).length;
-          _pendingCredentials = (pending as List).length;
+        _totalStudents = (students as List).length;
+        _totalBuses = (buses as List).length;
+        _totalDrivers = (drivers as List).length;
+        _totalRoutes = (routes as List).length;
+        _helpdeskCount = (helpdesks as List).length;
+        _pendingCredentials = (pending as List).length;
+        _tripsToday = tripsDone;
+        _tripsRunning = tripsRun;
         });
+        await _fetchBuses();
       }
       setState(() => _isLoadingStats = false);
     } catch (e) {
@@ -269,6 +314,332 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
     }
   }
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // CSV upload. The first time, routes are simply saved. After that the admin
+  // chooses:
+  //   * ADD NEW ROUTES   routes that already exist are left exactly as they are
+  //   * UPDATE FROM FILE routes in the file are updated IN PLACE
+  // Nothing is ever deleted and re-created, so stops keep their map location and
+  // the students, faculty and drivers assigned to them keep their stop. Routes and
+  // stops that are not in the file are removed only if nobody uses them.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  String _nm(dynamic s) => (s ?? '').toString().trim().toLowerCase();
+
+  _ImportPlan _planImport({
+    required bool update,
+    required Map<String, List<Map<String, dynamic>>> grouped,
+    required List<Map<String, dynamic>> dbRoutes,
+    required List<Map<String, dynamic>> dbStops,
+    required Set<String> usedStops,
+    required Set<String> usedRoutes,
+  }) {
+    final plan = _ImportPlan();
+    final dbByName = {for (final r in dbRoutes) _nm(r['route_name']): r};
+
+    for (final e in grouped.entries) {
+      final named = e.value.where((st) => _nm(st['stop_name']).isNotEmpty).toList();
+      final db = dbByName[_nm(e.key)];
+      if (db == null) {
+        plan.routesAdd.add(e.key);
+        plan.stopsAdd += named.length;
+        continue;
+      }
+      if (!update) {
+        plan.routesSkip.add(e.key);
+        continue;
+      }
+      plan.routesUpdate.add(e.key);
+      final existing =
+          dbStops.where((st) => st['route_id'].toString() == db['id'].toString()).toList();
+      final byName = {for (final st in existing) _nm(st['stop_name']): st};
+      final fileNames = <String>{};
+      for (final st in named) {
+        final nm = _nm(st['stop_name']);
+        fileNames.add(nm);
+        if (byName.containsKey(nm)) {
+          plan.stopsUpdate++;
+        } else {
+          plan.stopsAdd++;
+        }
+      }
+      for (final st in existing) {
+        if (!fileNames.contains(_nm(st['stop_name']))) {
+          if (usedStops.contains(st['id'].toString())) {
+            plan.stopsKept++;
+          } else {
+            plan.stopsRemove++;
+          }
+        }
+      }
+    }
+
+    if (update) {
+      final inFile = grouped.keys.map(_nm).toSet();
+      for (final r in dbRoutes) {
+        if (!inFile.contains(_nm(r['route_name']))) {
+          if (usedRoutes.contains(r['id'].toString())) {
+            plan.routesKept.add(r['route_name'].toString());
+          } else {
+            plan.routesRemove.add(r['route_name'].toString());
+          }
+        }
+      }
+    }
+    return plan;
+  }
+
+  Future<void> _applyImport({
+    required bool update,
+    required dynamic institutionId,
+    required Map<String, List<Map<String, dynamic>>> grouped,
+    required List<Map<String, dynamic>> dbRoutes,
+    required List<Map<String, dynamic>> dbStops,
+    required Set<String> usedStops,
+    required Set<String> usedRoutes,
+  }) async {
+    final dbByName = {for (final r in dbRoutes) _nm(r['route_name']): r};
+
+    for (final e in grouped.entries) {
+      final db = dbByName[_nm(e.key)];
+      dynamic routeId;
+      var existing = <Map<String, dynamic>>[];
+
+      if (db == null) {
+        final created = await _supabase
+            .from('routes')
+            .insert({'institution_id': institutionId, 'route_name': e.key})
+            .select('id')
+            .single();
+        routeId = created['id'];
+      } else if (!update) {
+        continue; // "add new routes only": an existing route is left as it is
+      } else {
+        routeId = db['id'];
+        existing =
+            dbStops.where((st) => st['route_id'].toString() == routeId.toString()).toList();
+      }
+
+      final byName = {for (final st in existing) _nm(st['stop_name']): st};
+      final fileNames = <String>{};
+      final toInsert = <Map<String, dynamic>>[];
+      var order = 0;
+
+      for (final st in e.value) {
+        final sName = (st['stop_name'] ?? '').toString().trim();
+        if (sName.isEmpty) continue;
+        order++;
+        final nm = _nm(sName);
+        fileNames.add(nm);
+        final lat = double.tryParse((st['lat'] ?? '').toString().trim());
+        final lng = double.tryParse((st['lng'] ?? '').toString().trim());
+        final timing = (st['timing'] ?? '').toString().trim();
+        final match = byName[nm];
+        if (match != null) {
+          // same stop: keep it (and everyone on it); update the time and the order.
+          // The map location is only changed when the file really has one.
+          final upd = <String, dynamic>{'timing': timing, 'stop_order': order};
+          if (lat != null && lng != null) {
+            upd['lat'] = lat;
+            upd['lng'] = lng;
+          }
+          await _supabase.from('stops').update(upd).eq('id', match['id']);
+        } else {
+          toInsert.add({
+            'route_id': routeId,
+            'stop_name': sName,
+            'timing': timing,
+            'lat': lat,
+            'lng': lng,
+            'stop_order': order,
+          });
+        }
+      }
+      if (toInsert.isNotEmpty) {
+        await _supabase.from('stops').insert(toInsert);
+      }
+
+      // stops that are not in the file: removed only if nobody uses them
+      for (final st in existing) {
+        if (!fileNames.contains(_nm(st['stop_name'])) &&
+            !usedStops.contains(st['id'].toString())) {
+          await _supabase.from('stops').delete().eq('id', st['id']);
+        }
+      }
+    }
+
+    if (update) {
+      final inFile = grouped.keys.map(_nm).toSet();
+      for (final r in dbRoutes) {
+        if (!inFile.contains(_nm(r['route_name'])) &&
+            !usedRoutes.contains(r['id'].toString())) {
+          await _supabase.from('stops').delete().eq('route_id', r['id']);
+          await _supabase.from('routes').delete().eq('id', r['id']);
+        }
+      }
+    }
+  }
+
+  List<String> _previewLines(_ImportPlan p, bool update) {
+    String names(List<String> l) =>
+        l.length <= 5 ? l.join(', ') : '${l.take(5).join(', ')} and ${l.length - 5} more';
+    final out = <String>[];
+    if (!update) {
+      out.add(p.routesAdd.isEmpty
+          ? 'No new routes in this file.'
+          : 'Will add ${p.routesAdd.length} new route${p.routesAdd.length == 1 ? '' : 's'} '
+              '(${p.stopsAdd} stops): ${names(p.routesAdd)}.');
+      if (p.routesSkip.isNotEmpty) {
+        out.add('Will leave ${p.routesSkip.length} existing route'
+            '${p.routesSkip.length == 1 ? '' : 's'} untouched: ${names(p.routesSkip)}.');
+      }
+    } else {
+      out.add('Routes updated in place: ${p.routesUpdate.length}.');
+      if (p.routesAdd.isNotEmpty) {
+        out.add('New routes added: ${names(p.routesAdd)}.');
+      }
+      out.add('Stops: ${p.stopsAdd} added, ${p.stopsUpdate} updated, ${p.stopsRemove} removed.');
+      if (p.routesRemove.isNotEmpty) {
+        out.add('Routes removed (nobody uses them): ${names(p.routesRemove)}.');
+      }
+      if (p.stopsKept > 0 || p.routesKept.isNotEmpty) {
+        out.add('Kept because people use them: ${p.stopsKept} stop${p.stopsKept == 1 ? '' : 's'}'
+            '${p.routesKept.isEmpty ? '' : ', routes ${names(p.routesKept)}'}.');
+      }
+    }
+    return out;
+  }
+
+  /// true = update from the file, false = add new routes only, null = cancelled
+  Future<bool?> _askImportMode(int fileRoutes, int dbRouteCount, _ImportPlan add, _ImportPlan upd) {
+    var update = false;
+    return showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (c) => StatefulBuilder(
+        builder: (c, setSheet) {
+          Widget option(bool isUpdate, IconData icon, String title, String sub) {
+            final on = update == isUpdate;
+            return YmPressable(
+              onTap: () => setSheet(() => update = isUpdate),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: on ? Ym.amber.withOpacity(0.16) : Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: on ? Ym.amberDark : Ym.line, width: on ? 1.6 : 1),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    YmIconBadge(icon: icon, color: on ? Ym.amberDark : Ym.grey, size: 40),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(title, style: Ym.h(14.5)),
+                          const SizedBox(height: 3),
+                          Text(sub, style: Ym.t(12, color: Ym.grey).copyWith(height: 1.4)),
+                        ],
+                      ),
+                    ),
+                    Icon(on ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded,
+                        color: on ? Ym.amberDark : Ym.grey, size: 22),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          final lines = _previewLines(update ? upd : add, update);
+          return Container(
+            constraints: BoxConstraints(maxHeight: MediaQuery.of(c).size.height * 0.88),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+            ),
+            padding: const EdgeInsets.fromLTRB(22, 14, 22, 22),
+            child: SafeArea(
+              top: false,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 42,
+                        height: 4.5,
+                        decoration:
+                            BoxDecoration(color: Ym.line, borderRadius: BorderRadius.circular(4)),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text('You already have $dbRouteCount route${dbRouteCount == 1 ? '' : 's'}',
+                        style: Ym.h(20)),
+                    const SizedBox(height: 4),
+                    Text('This file has $fileRoutes. How should it be applied?',
+                        style: Ym.t(13, color: Ym.grey)),
+                    const SizedBox(height: 16),
+                    option(false, Icons.add_road_rounded, 'Add new routes only',
+                        'Routes that already exist stay exactly as they are. Only routes that are new are added.'),
+                    const SizedBox(height: 10),
+                    option(true, Icons.sync_alt_rounded, 'Update from this file',
+                        'Routes in the file are updated in place. Stops keep their map location and the people on them. '
+                        'Routes and stops that are not in the file are removed only if nobody uses them.'),
+                    const SizedBox(height: 16),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Ym.creamTop,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('What will happen',
+                              style: Ym.t(12, color: Ym.grey, w: FontWeight.w800)),
+                          const SizedBox(height: 6),
+                          for (final l in lines)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: Text(l, style: Ym.t(13).copyWith(height: 1.4)),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: YmButton(
+                              label: 'Cancel',
+                              outline: true,
+                              onPressed: () => Navigator.pop(c, null)),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: YmButton(
+                              label: 'Apply',
+                              icon: Icons.check_rounded,
+                              onPressed: () => Navigator.pop(c, update)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> _saveExcelDataToDatabase() async {
     if (_stagedExcelRoutes.isEmpty) return;
     setState(() => _isLoadingStats = true);
@@ -281,77 +652,93 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
           .single();
       final institutionId = institution['id'];
 
-      Map<String, List<Map<String, dynamic>>> groupedExcelRoutes = {};
-      for (var item in _stagedExcelRoutes) {
-        final rName = item['route_name'].toString().trim();
+      // the file, grouped by route name (the order of the file is kept)
+      final grouped = <String, List<Map<String, dynamic>>>{};
+      for (final item in _stagedExcelRoutes) {
+        final rName = (item['route_name'] ?? '').toString().trim();
         if (rName.isEmpty) continue;
-        groupedExcelRoutes.putIfAbsent(rName, () => []).add(item);
+        grouped.putIfAbsent(rName, () => []).add(item);
       }
+      if (grouped.isEmpty) throw Exception('The file has no route names.');
 
-      final dbRoutes = await _supabase
+      // what exists today
+      final dbRoutes = List<Map<String, dynamic>>.from(await _supabase
           .from('routes')
           .select('id, route_name')
-          .eq('institution_id', institutionId);
-      List<Map<String, dynamic>> currentDbRoutes =
-          List<Map<String, dynamic>>.from(dbRoutes);
-
-      for (var dbRoute in currentDbRoutes) {
-        if (!groupedExcelRoutes.containsKey(dbRoute['route_name'])) {
-          await _supabase.from('routes').delete().eq('id', dbRoute['id']);
-        }
+          .eq('institution_id', institutionId));
+      final routeIds = [for (final r in dbRoutes) r['id']];
+      var dbStops = <Map<String, dynamic>>[];
+      if (routeIds.isNotEmpty) {
+        dbStops = List<Map<String, dynamic>>.from(await _supabase
+            .from('stops')
+            .select('id, route_id, stop_name')
+            .inFilter('route_id', routeIds));
       }
 
-      List<Map<String, dynamic>> allStopsToInsert = [];
-      for (var entry in groupedExcelRoutes.entries) {
-        final routeName = entry.key;
-        final matchingStops = entry.value;
-        var existingRoute = await _supabase
-            .from('routes')
-            .select('id')
-            .eq('institution_id', institutionId)
-            .eq('route_name', routeName)
-            .maybeSingle();
-
-        dynamic targetRouteId;
-        if (existingRoute != null) {
-          targetRouteId = existingRoute['id'];
-          await _supabase.from('stops').delete().eq('route_id', targetRouteId);
-        } else {
-          final newRoute = await _supabase.from('routes').insert({
-            'institution_id': institutionId,
-            'route_name': routeName,
-          }).select('id').single();
-          targetRouteId = newRoute['id'];
-        }
-
-        final finalRouteId = (int.tryParse(targetRouteId.toString()) != null)
-            ? int.parse(targetRouteId.toString())
-            : targetRouteId;
-
-        for (var stop in matchingStops) {
-          final sName = stop['stop_name'].toString().trim();
-          if (sName.isEmpty) continue;
-          double? latVal;
-          double? lngVal;
-          if ((stop['lat'] ?? '').toString().isNotEmpty) {
-            latVal = double.tryParse(stop['lat'].toString());
+      // what people are using (an upload never removes these)
+      final usedStops = <String>{};
+      final usedRoutes = <String>{};
+      Future<void> collect(String table, {required bool withStop}) async {
+        try {
+          final rows = await _supabase
+              .from(table)
+              .select(withStop ? 'route_id, stop_id' : 'route_id')
+              .eq('institution_id', institutionId);
+          for (final r in rows) {
+            if (r['route_id'] != null) usedRoutes.add(r['route_id'].toString());
+            if (withStop && r['stop_id'] != null) usedStops.add(r['stop_id'].toString());
           }
-          if ((stop['lng'] ?? '').toString().isNotEmpty) {
-            lngVal = double.tryParse(stop['lng'].toString());
-          }
-          allStopsToInsert.add({
-            'route_id': finalRouteId,
-            'stop_name': sName,
-            'timing': stop['timing'].toString().trim(),
-            'lat': latVal,
-            'lng': lngVal,
-          });
+        } catch (_) {
+          // a table or column that is not there simply uses nothing
         }
       }
 
-      if (allStopsToInsert.isNotEmpty) {
-        await _supabase.from('stops').insert(allStopsToInsert);
+      await collect('students', withStop: true);
+      await collect('faculty', withStop: true);
+      await collect('drivers', withStop: false);
+      if (routeIds.isNotEmpty) {
+        try {
+          final t = await _supabase
+              .from('trips')
+              .select('route_id')
+              .inFilter('route_id', routeIds)
+              .limit(5000);
+          for (final r in t) {
+            if (r['route_id'] != null) usedRoutes.add(r['route_id'].toString());
+          }
+        } catch (_) {}
       }
+
+      _ImportPlan planFor(bool update) => _planImport(
+            update: update,
+            grouped: grouped,
+            dbRoutes: dbRoutes,
+            dbStops: dbStops,
+            usedStops: usedStops,
+            usedRoutes: usedRoutes,
+          );
+
+      // first time: just save. After that the admin chooses.
+      var update = false;
+      if (dbRoutes.isNotEmpty) {
+        setState(() => _isLoadingStats = false);
+        final choice =
+            await _askImportMode(grouped.length, dbRoutes.length, planFor(false), planFor(true));
+        if (choice == null) return; // cancelled: nothing was changed
+        update = choice;
+        setState(() => _isLoadingStats = true);
+      }
+      final plan = planFor(update);
+
+      await _applyImport(
+        update: update,
+        institutionId: institutionId,
+        grouped: grouped,
+        dbRoutes: dbRoutes,
+        dbStops: dbStops,
+        usedStops: usedStops,
+        usedRoutes: usedRoutes,
+      );
 
       setState(() => _stagedExcelRoutes.clear());
       await _loadDashboardData();
@@ -359,10 +746,19 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
       await _fetchLiveRoutesAndStops();
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Database mirrored successfully!'),
-              backgroundColor: Colors.green),
+        showDialog(
+          context: context,
+          builder: (c) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            title: Row(children: [
+              const Icon(Icons.check_circle_rounded, color: Ym.green),
+              const SizedBox(width: 10),
+              Text('Routes saved', style: Ym.h(18)),
+            ]),
+            content: Text(_previewLines(plan, update).join('\n\n'),
+                style: Ym.t(13.5, color: Ym.grey).copyWith(height: 1.5)),
+            actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('OK'))],
+          ),
         );
       }
     } catch (e) {
@@ -373,15 +769,13 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
             title: const Text('Sync Failure'),
             content: Text(e.toString()),
             actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('OK'))
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))
             ],
           ),
         );
       }
     } finally {
-      setState(() => _isLoadingStats = false);
+      if (mounted) setState(() => _isLoadingStats = false);
     }
   }
 
@@ -431,7 +825,7 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
           actions: [
             TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF3B5BFF)),
+              style: ElevatedButton.styleFrom(backgroundColor: Ym.amber, foregroundColor: Ym.navy, elevation: 0),
               onPressed: selectedRouteId == null
                   ? null
                   : () async {
@@ -474,7 +868,7 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         }
                       }
                     },
-              child: const Text('Confirm', style: TextStyle(color: Colors.white)),
+              child: const Text('Confirm', style: TextStyle(color: Ym.navy, fontWeight: FontWeight.w800)),
             ),
           ],
         ),
@@ -889,12 +1283,12 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
               TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close', style: TextStyle(color: Colors.grey))),
               ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF3B5BFF)),
+                style: ElevatedButton.styleFrom(backgroundColor: Ym.amber, foregroundColor: Ym.navy, elevation: 0),
                 onPressed: () async {
                   await _updateRouteName(routeId, routeNameController.text);
                   if (dialogContext.mounted) Navigator.pop(dialogContext);
                 },
-                child: const Text('Save', style: TextStyle(color: Colors.white)),
+                child: const Text('Save', style: TextStyle(color: Ym.navy, fontWeight: FontWeight.w800)),
               ),
             ],
           );
@@ -930,8 +1324,9 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
         }
       },
       child: Scaffold(
-        backgroundColor: const Color(0xFFFFFBF0),
-        body: IndexedStack(
+        backgroundColor: Ym.creamTop,
+        body: YmBackground(
+          child: IndexedStack(
           index: _currentIndex,
           children: [
             _HomeTab(
@@ -942,6 +1337,8 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
               totalRoutes: _totalRoutes,
               totalDrivers: _totalDrivers,
               helpdeskCount: _helpdeskCount,
+              tripsToday: _tripsToday,
+              tripsRunning: _tripsRunning,
               pendingCredentials: _pendingCredentials,
               isLoading: _isLoadingStats,
               onRefresh: () async {
@@ -980,7 +1377,12 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
               onRefresh: _fetchLiveRoutesAndStops,
               onEditRoute: _openEditRouteDialog,
             ),
-            const _PlaceholderTab(title: 'Drivers'),
+            AdminDriversTab(
+              supabase: _supabase,
+              institutionId: _institutionId,
+              routes: _availableRoutes,
+              onChanged: _loadDashboardData,
+            ),
             _AnnouncementsTab(
               supabase: _supabase,
               institutionId: _institutionId,
@@ -988,27 +1390,25 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
               routes: _availableRoutes,
             ),
           ],
-        ),
-        bottomNavigationBar: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 20, offset: const Offset(0, -4))],
-            borderRadius: const BorderRadius.only(topLeft: Radius.circular(24), topRight: Radius.circular(24)),
-          ),
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  Expanded(child: _NavItem(icon: Icons.home_rounded, label: 'Home', index: 0, currentIndex: _currentIndex, onTap: (i) => setState(() => _currentIndex = i))),
-                  Expanded(child: _NavItem(icon: Icons.support_agent_rounded, label: 'Helpdesk', index: 1, currentIndex: _currentIndex, onTap: (i) => setState(() => _currentIndex = i))),
-                  Expanded(child: _NavItem(icon: Icons.people_rounded, label: 'Commuters', index: 2, currentIndex: _currentIndex, onTap: (i) => setState(() => _currentIndex = i))),
-                  Expanded(child: _NavItem(icon: Icons.directions_bus_rounded, label: 'Bus Details', index: 3, currentIndex: _currentIndex, onTap: (i) => setState(() => _currentIndex = i))),
-                  Expanded(child: _NavItem(icon: Icons.person_rounded, label: 'Drivers', index: 4, currentIndex: _currentIndex, onTap: (i) => setState(() => _currentIndex = i))),
-                  Expanded(child: _NavItem(icon: Icons.campaign_rounded, label: 'Announcements', index: 5, currentIndex: _currentIndex, onTap: (i) => setState(() => _currentIndex = i))),
-                ],
-              ),
+        )),
+        bottomNavigationBar: SafeArea(
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(30),
+              boxShadow: Ym.shadow(Ym.navy, 0.18),
+            ),
+            child: Row(
+              children: [
+                Expanded(child: _NavItem(icon: Icons.home_rounded, label: 'Home', index: 0, currentIndex: _currentIndex, onTap: (i) => setState(() => _currentIndex = i))),
+                Expanded(child: _NavItem(icon: Icons.support_agent_rounded, label: 'Helpdesk', index: 1, currentIndex: _currentIndex, onTap: (i) => setState(() => _currentIndex = i))),
+                Expanded(child: _NavItem(icon: Icons.people_rounded, label: 'Commuters', index: 2, currentIndex: _currentIndex, onTap: (i) => setState(() => _currentIndex = i))),
+                Expanded(child: _NavItem(icon: Icons.directions_bus_rounded, label: 'Bus Details', index: 3, currentIndex: _currentIndex, onTap: (i) => setState(() => _currentIndex = i))),
+                Expanded(child: _NavItem(icon: Icons.person_rounded, label: 'Drivers', index: 4, currentIndex: _currentIndex, onTap: (i) => setState(() => _currentIndex = i))),
+                Expanded(child: _NavItem(icon: Icons.campaign_rounded, label: 'Announcements', index: 5, currentIndex: _currentIndex, onTap: (i) => setState(() => _currentIndex = i))),
+              ],
             ),
           ),
         ),
@@ -1170,8 +1570,10 @@ class _HelpdeskManagementTabState extends State<_HelpdeskManagementTab> {
             TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF3B5BFF),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                backgroundColor: Ym.amber,
+                foregroundColor: Ym.navy,
+                elevation: 0,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               ),
               onPressed: isLoading ? null : () async {
                 final name = nameCtrl.text.trim();
@@ -1229,9 +1631,9 @@ class _HelpdeskManagementTabState extends State<_HelpdeskManagementTab> {
               child: isLoading
                   ? const SizedBox(
                       width: 16, height: 16,
-                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                      child: CircularProgressIndicator(color: Ym.navy, strokeWidth: 2),
                     )
-                  : const Text('Create Account', style: TextStyle(color: Colors.white)),
+                  : const Text('Create Account', style: TextStyle(color: Ym.navy, fontWeight: FontWeight.w800)),
             ),
           ],
         ),
@@ -1270,9 +1672,9 @@ class _HelpdeskManagementTabState extends State<_HelpdeskManagementTab> {
         ),
         actions: [
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF3B5BFF)),
+            style: ElevatedButton.styleFrom(backgroundColor: Ym.amber, foregroundColor: Ym.navy, elevation: 0),
             onPressed: () => Navigator.pop(context),
-            child: const Text('Got it!', style: TextStyle(color: Colors.white)),
+            child: const Text('Got it!', style: TextStyle(color: Ym.navy, fontWeight: FontWeight.w800)),
           ),
         ],
       ),
@@ -1348,9 +1750,9 @@ class _HelpdeskManagementTabState extends State<_HelpdeskManagementTab> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF3B5BFF)),
+            style: ElevatedButton.styleFrom(backgroundColor: Ym.amber, foregroundColor: Ym.navy, elevation: 0),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Reset & Email', style: TextStyle(color: Colors.white)),
+            child: const Text('Reset & Email', style: TextStyle(color: Ym.navy, fontWeight: FontWeight.w800)),
           ),
         ],
       ),
@@ -1409,155 +1811,164 @@ class _HelpdeskManagementTabState extends State<_HelpdeskManagementTab> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF9FAFB),
+      backgroundColor: const Color(0xFFFFFBF0),
       body: SafeArea(
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-              child: Row(
-                children: [
-                  const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Help Desk',
-                          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Color(0xFF0F1B4C))),
-                      Text('Manage help desk accounts',
-                          style: TextStyle(fontSize: 13, color: Color(0xFF8892AA))),
-                    ],
-                  ),
-                  const Spacer(),
-                  ElevatedButton.icon(
-                    onPressed: _showAddDialog,
-                    icon: const Icon(Icons.add, size: 16, color: Colors.white),
-                    label: const Text('Add', style: TextStyle(color: Colors.white)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF3B5BFF),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      elevation: 0,
-                    ),
-                  ),
-                ],
-              ),
+            _AdminHeader(
+              title: 'Help Desk',
+              subtitle: _isLoading
+                  ? 'Manage help desk accounts'
+                  : '${_helpdesks.length} account${_helpdesks.length == 1 ? '' : 's'}',
+              icon: Icons.support_agent_rounded,
+              trailing: _PillButton(label: 'Add', icon: Icons.add_rounded, onTap: _showAddDialog),
             ),
             Expanded(
               child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const YmSkeletonList(count: 4, height: 84)
                   : _helpdesks.isEmpty
-                      ? const Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.support_agent_rounded, size: 48, color: Color(0xFF8892AA)),
-                              SizedBox(height: 12),
-                              Text('No help desk accounts yet',
-                                  style: TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF0F1B4C))),
-                              SizedBox(height: 4),
-                              Text('Tap Add to create one', style: TextStyle(color: Color(0xFF8892AA))),
-                            ],
-                          ),
+                      ? const _AdminEmpty(
+                          icon: Icons.support_agent_rounded,
+                          title: 'No help desk accounts yet',
+                          subtitle: 'Tap Add to create the first one.',
                         )
                       : RefreshIndicator(
                           onRefresh: _fetchHelpdesks,
                           child: ListView.builder(
-                            padding: const EdgeInsets.all(16),
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: const EdgeInsets.fromLTRB(20, 6, 20, 24),
                             itemCount: _helpdesks.length,
                             itemBuilder: (context, index) {
                               final hd = _helpdesks[index];
                               final isActive = hd['is_active'] ?? true;
-                              return Container(
-                                margin: const EdgeInsets.only(bottom: 12),
-                                padding: const EdgeInsets.all(14),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(14),
-                                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
-                                ),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      width: 42, height: 42,
-                                      decoration: BoxDecoration(color: const Color(0xFFEEF2FF), borderRadius: BorderRadius.circular(10)),
-                                      child: const Icon(Icons.support_agent_rounded, color: Color(0xFF3B5BFF), size: 20),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(hd['name'] ?? 'Unknown',
-                                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: Color(0xFF0F1B4C))),
-                                          Text(hd['email'] ?? '',
-                                              style: const TextStyle(fontSize: 12, color: Color(0xFF8892AA))),
-                                          if (hd['phone'] != null && hd['phone'].toString().isNotEmpty)
-                                            Text(hd['phone'], style: const TextStyle(fontSize: 11, color: Color(0xFF8892AA))),
+                              final name = (hd['name'] ?? 'Unknown').toString();
+                              final phone = (hd['phone'] ?? '').toString();
+                              return YmFadeSlide(
+                                index: index,
+                                child: Container(
+                                  margin: const EdgeInsets.only(bottom: 12),
+                                  padding: const EdgeInsets.all(14),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(20),
+                                    boxShadow: _adminShadow,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      _Avatar(
+                                          name: name,
+                                          color: isActive
+                                              ? const Color(0xFF3B5BFF)
+                                              : const Color(0xFF8892AA)),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(name,
+                                                style: const TextStyle(
+                                                    fontWeight: FontWeight.w800,
+                                                    fontSize: 15,
+                                                    color: Color(0xFF0F1B4C))),
+                                            const SizedBox(height: 3),
+                                            Row(
+                                              children: [
+                                                const Icon(Icons.mail_outline_rounded,
+                                                    size: 13, color: Color(0xFF8892AA)),
+                                                const SizedBox(width: 5),
+                                                Expanded(
+                                                  child: Text(hd['email'] ?? '',
+                                                      overflow: TextOverflow.ellipsis,
+                                                      style: const TextStyle(
+                                                          fontSize: 12,
+                                                          color: Color(0xFF8892AA))),
+                                                ),
+                                              ],
+                                            ),
+                                            if (phone.isNotEmpty)
+                                              Padding(
+                                                padding: const EdgeInsets.only(top: 2),
+                                                child: Row(
+                                                  children: [
+                                                    const Icon(Icons.phone_outlined,
+                                                        size: 13, color: Color(0xFF8892AA)),
+                                                    const SizedBox(width: 5),
+                                                    Text(phone,
+                                                        style: const TextStyle(
+                                                            fontSize: 12,
+                                                            color: Color(0xFF8892AA))),
+                                                  ],
+                                                ),
+                                              ),
+                                            const SizedBox(height: 8),
+                                            _InfoChip(isActive ? 'Active' : 'Inactive',
+                                                icon: isActive
+                                                    ? Icons.check_circle_rounded
+                                                    : Icons.block_rounded,
+                                                color: isActive
+                                                    ? const Color(0xFF16A34A)
+                                                    : Colors.redAccent),
+                                          ],
+                                        ),
+                                      ),
+                                      PopupMenuButton<String>(
+                                        icon: const Icon(Icons.more_vert_rounded,
+                                            color: Color(0xFF8892AA), size: 20),
+                                        shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(14)),
+                                        onSelected: (value) {
+                                          if (value == 'toggle') {
+                                            _toggleActive(hd['id'], isActive);
+                                          } else if (value == 'reset') {
+                                            _resetAndEmailPassword(hd);
+                                          } else if (value == 'delete') {
+                                            _deleteHelpdesk(hd['user_id'], hd['id']);
+                                          }
+                                        },
+                                        itemBuilder: (context) => [
+                                          PopupMenuItem(
+                                            value: 'toggle',
+                                            child: Row(
+                                              children: [
+                                                Icon(
+                                                  isActive
+                                                      ? Icons.block_rounded
+                                                      : Icons.check_circle_rounded,
+                                                  color: isActive ? Colors.orange : Colors.green,
+                                                  size: 18,
+                                                ),
+                                                const SizedBox(width: 10),
+                                                Text(isActive ? 'Deactivate' : 'Activate'),
+                                              ],
+                                            ),
+                                          ),
+                                          const PopupMenuItem(
+                                            value: 'reset',
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.lock_reset_rounded,
+                                                    color: Color(0xFF3B5BFF), size: 18),
+                                                SizedBox(width: 10),
+                                                Text('Reset & Email Password'),
+                                              ],
+                                            ),
+                                          ),
+                                          const PopupMenuItem(
+                                            value: 'delete',
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.delete_rounded,
+                                                    color: Colors.redAccent, size: 18),
+                                                SizedBox(width: 10),
+                                                Text('Delete',
+                                                    style: TextStyle(color: Colors.redAccent)),
+                                              ],
+                                            ),
+                                          ),
                                         ],
                                       ),
-                                    ),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                      decoration: BoxDecoration(
-                                        color: isActive ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
-                                        borderRadius: BorderRadius.circular(20),
-                                      ),
-                                      child: Text(
-                                        isActive ? 'Active' : 'Inactive',
-                                        style: TextStyle(
-                                          fontSize: 10, fontWeight: FontWeight.w700,
-                                          color: isActive ? const Color(0xFF16A34A) : Colors.redAccent,
-                                        ),
-                                      ),
-                                    ),
-                                    PopupMenuButton<String>(
-                                      icon: const Icon(Icons.more_vert_rounded, color: Color(0xFF8892AA), size: 20),
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                      onSelected: (value) {
-                                        if (value == 'toggle') {
-                                          _toggleActive(hd['id'], isActive);
-                                        } else if (value == 'reset') {
-                                          _resetAndEmailPassword(hd);
-                                        } else if (value == 'delete') {
-                                          _deleteHelpdesk(hd['user_id'], hd['id']);
-                                        }
-                                      },
-                                      itemBuilder: (context) => [
-                                        PopupMenuItem(
-                                          value: 'toggle',
-                                          child: Row(
-                                            children: [
-                                              Icon(
-                                                isActive ? Icons.block_rounded : Icons.check_circle_rounded,
-                                                color: isActive ? Colors.orange : Colors.green,
-                                                size: 18,
-                                              ),
-                                              const SizedBox(width: 10),
-                                              Text(isActive ? 'Deactivate' : 'Activate'),
-                                            ],
-                                          ),
-                                        ),
-                                        const PopupMenuItem(
-                                          value: 'reset',
-                                          child: Row(
-                                            children: [
-                                              Icon(Icons.lock_reset_rounded, color: Color(0xFF3B5BFF), size: 18),
-                                              SizedBox(width: 10),
-                                              Text('Reset & Email Password'),
-                                            ],
-                                          ),
-                                        ),
-                                        const PopupMenuItem(
-                                          value: 'delete',
-                                          child: Row(
-                                            children: [
-                                              Icon(Icons.delete_rounded, color: Colors.redAccent, size: 18),
-                                              SizedBox(width: 10),
-                                              Text('Delete', style: TextStyle(color: Colors.redAccent)),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                               );
                             },
@@ -1596,6 +2007,7 @@ class _CommutersTabState extends State<_CommutersTab> {
   List<Map<String, dynamic>> _students = [];
   List<Map<String, dynamic>> _faculty = [];
   String? _selectedRouteName;
+  String _search = '';
 
   void _showSnack(String msg) {
     if (!mounted) return;
@@ -1633,6 +2045,213 @@ class _CommutersTabState extends State<_CommutersTab> {
     }
   }
 
+  /// the admin makes this faculty member the in-charge of their route
+  Future<void> _assignIncharge(Map<String, dynamic> f) async {
+    final name = (f['faculty_name'] ?? 'this person').toString();
+    if (f['route_id'] == null) {
+      _showSnack('$name has no route yet. Assign a route first, then make them the in-charge.');
+      return;
+    }
+    final route = ((f['routes'] as Map?)?['route_name'] ?? 'this route').toString();
+    final hasOne = _faculty.any((p) =>
+        p['route_id'] == f['route_id'] &&
+        (p['routes'] as Map?)?['incharge_faculty_id'] == p['id']);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Text('Make $name the in-charge?', style: Ym.h(18)),
+        content: Text(
+          '$name will be the in-charge of $route. Their dashboard will show the in-charge tools '
+          '(scan bus passes, route complaints and ride requests).'
+          '\n\nA NEW password is emailed to ${f['faculty_email'] ?? 'them'}. It is the same login, '
+          'so their old password stops working.'
+          '${hasOne ? '\n\nThe current in-charge of this route will be replaced.' : ''}',
+          style: Ym.t(13.5, color: Ym.grey).copyWith(height: 1.5),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(c, true),
+              child: Text('Make in-charge',
+                  style: Ym.t(14, color: Ym.amberDark, w: FontWeight.w800))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _callMakeIncharge(f, resend: false);
+  }
+
+  /// the admin puts a faculty member who has no route on one of the institution's routes
+  Future<void> _assignRoute(Map<String, dynamic> f) async {
+    final name = (f['faculty_name'] ?? 'This person').toString();
+    if (widget.institutionId == null) {
+      _showSnack('Institution not loaded yet — try again in a moment.');
+      return;
+    }
+    try {
+      final rows = await widget.supabase
+          .from('routes')
+          .select('id, route_name')
+          .eq('institution_id', widget.institutionId!)
+          .order('route_name');
+      if (!mounted) return;
+      if (rows.isEmpty) {
+        _showSnack('There are no routes yet. Add a route first.');
+        return;
+      }
+      final chosen = await showModalBottomSheet<Map<String, dynamic>>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        isScrollControlled: true,
+        builder: (c) => Container(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(c).size.height * 0.7),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+          ),
+          padding: const EdgeInsets.fromLTRB(22, 14, 22, 22),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 42,
+                    height: 4.5,
+                    decoration: BoxDecoration(
+                        color: Ym.line, borderRadius: BorderRadius.circular(4)),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text('Choose a route for $name', style: Ym.h(18)),
+                const SizedBox(height: 4),
+                Text('They will appear under this route in Commuters.',
+                    style: Ym.t(12.5, color: Ym.grey)),
+                const SizedBox(height: 12),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final r in rows)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: YmCard(
+                            onTap: () => Navigator.pop(c, Map<String, dynamic>.from(r)),
+                            padding: const EdgeInsets.all(14),
+                            radius: 18,
+                            child: Row(
+                              children: [
+                                const YmIconBadge(icon: Icons.route_rounded, size: 40),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text((r['route_name'] ?? 'Route').toString(),
+                                      style: Ym.h(14.5)),
+                                ),
+                                const Icon(Icons.chevron_right_rounded, color: Ym.grey),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      if (chosen == null) return;
+      await widget.supabase
+          .from('faculty')
+          .update({'route_id': chosen['id']}).eq('id', f['id']);
+      _showSnack('$name is now on ${chosen['route_name']}.');
+      await _fetchFaculty();
+    } catch (e) {
+      _showSnack('Could not assign the route: $e');
+    }
+  }
+
+  /// Runs the make-incharge function: it assigns the in-charge, sets a NEW password
+  /// and emails it. With resend: true it only makes and emails another new password.
+  Future<void> _callMakeIncharge(Map<String, dynamic> f, {required bool resend}) async {
+    final name = (f['faculty_name'] ?? 'This person').toString();
+    final route = ((f['routes'] as Map?)?['route_name'] ?? 'the route').toString();
+    try {
+      final res = await widget.supabase.functions.invoke('make-incharge', body: {
+        'route_id': f['route_id'],
+        'faculty_id': f['id'],
+        'resend': resend,
+      });
+      final data = res.data is Map ? Map<String, dynamic>.from(res.data as Map) : <String, dynamic>{};
+      if (data['emailed'] == true) {
+        _showSnack(resend
+            ? 'New credentials emailed to ${data['email'] ?? 'the in-charge'}.'
+            : '$name is now the in-charge of $route. Credentials emailed to ${data['email'] ?? 'them'}.');
+      } else {
+        _showSnack('${resend ? '' : '$name is now the in-charge of $route. '}'
+            '${data['warning'] ?? 'The email could not be sent.'}');
+      }
+    } on FunctionException catch (e) {
+      final d = e.details;
+      final msg = d is Map ? (d['error'] ?? d.toString()).toString() : '$d';
+      if (e.status == 404 && !resend) {
+        // the email function is not set up yet: still make them the in-charge
+        try {
+          await widget.supabase.rpc('assign_incharge',
+              params: {'p_route': f['route_id'], 'p_faculty': f['id']});
+          _showSnack('$name is now the in-charge of $route, but no email was sent: '
+              'the make-incharge function is not set up yet.');
+        } on PostgrestException catch (e2) {
+          _showSnack(e2.message);
+        }
+      } else {
+        _showSnack(msg);
+      }
+    } on PostgrestException catch (e) {
+      _showSnack(e.message);
+    } catch (e) {
+      _showSnack('Could not complete this: $e');
+    }
+    await _fetchFaculty();
+  }
+
+  Future<void> _removeIncharge(Map<String, dynamic> f) async {
+    final name = (f['faculty_name'] ?? 'this person').toString();
+    final route = ((f['routes'] as Map?)?['route_name'] ?? 'this route').toString();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Text('Remove the in-charge?', style: Ym.h(18)),
+        content: Text(
+          '$name will no longer be the in-charge of $route. They stay as a normal faculty member.',
+          style: Ym.t(13.5, color: Ym.grey).copyWith(height: 1.5),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(c, true),
+              child: Text('Remove', style: Ym.t(14, color: Ym.red, w: FontWeight.w800))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await widget.supabase.rpc('remove_incharge', params: {'p_route': f['route_id']});
+      _showSnack('$name is no longer the in-charge of $route.');
+      await _fetchFaculty();
+    } on PostgrestException catch (e) {
+      _showSnack(e.message);
+    } catch (e) {
+      _showSnack('Could not remove the in-charge: $e');
+    }
+  }
+
   Future<void> _fetchFaculty() async {
     if (widget.institutionId == null) {
       _showSnack('Institution not loaded yet — try again in a moment.');
@@ -1644,7 +2263,8 @@ class _CommutersTabState extends State<_CommutersTab> {
           .from('faculty')
           .select(
               'id, faculty_name, employee_id, faculty_email, faculty_phone, '
-              'department, boarding_point, route_id, routes(route_name)')
+              'department, boarding_point, route_id, '
+              'routes(route_name, incharge_faculty_id)')
           .eq('institution_id', widget.institutionId!)
           .eq('credential_generated', true)
           .order('faculty_name', ascending: true);
@@ -1691,42 +2311,52 @@ class _CommutersTabState extends State<_CommutersTab> {
 
   Widget _buildMenu() {
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Commuters',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Color(0xFF0F1B4C))),
-            const SizedBox(height: 4),
-            const Text('View students and faculty grouped by route',
-                style: TextStyle(fontSize: 13, color: Color(0xFF8892AA))),
-            const SizedBox(height: 24),
-            _CommuterOptionCard(
-              icon: Icons.school_rounded,
-              iconBg: const Color(0xFFEDE9FE),
-              iconColor: const Color(0xFF7C3AED),
-              title: 'Students',
-              subtitle: 'Students with generated credentials',
-              onTap: () {
-                setState(() => _view = _CommutersView.studentRoutes);
-                _fetchStudents();
-              },
+      child: ListView(
+        padding: const EdgeInsets.only(bottom: 24),
+        children: [
+          const _AdminHeader(
+            title: 'Commuters',
+            subtitle: 'Students and faculty grouped by route',
+            icon: Icons.people_rounded,
+            color: Color(0xFF7C3AED),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+            child: Column(
+              children: [
+                YmFadeSlide(
+                  index: 0,
+                  child: _CommuterOptionCard(
+                    icon: Icons.school_rounded,
+                    iconBg: const Color(0xFFEDE9FE),
+                    iconColor: const Color(0xFF7C3AED),
+                    title: 'Students',
+                    subtitle: 'Students with generated credentials',
+                    onTap: () {
+                      setState(() => _view = _CommutersView.studentRoutes);
+                      _fetchStudents();
+                    },
+                  ),
+                ),
+                const SizedBox(height: 14),
+                YmFadeSlide(
+                  index: 1,
+                  child: _CommuterOptionCard(
+                    icon: Icons.badge_rounded,
+                    iconBg: const Color(0xFFDBEAFE),
+                    iconColor: const Color(0xFF2563EB),
+                    title: 'Faculties',
+                    subtitle: 'Faculty with generated credentials',
+                    onTap: () {
+                      setState(() => _view = _CommutersView.facultyRoutes);
+                      _fetchFaculty();
+                    },
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 14),
-            _CommuterOptionCard(
-              icon: Icons.badge_rounded,
-              iconBg: const Color(0xFFDBEAFE),
-              iconColor: const Color(0xFF2563EB),
-              title: 'Faculties',
-              subtitle: 'Faculty with generated credentials',
-              onTap: () {
-                setState(() => _view = _CommutersView.facultyRoutes);
-                _fetchFaculty();
-              },
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1740,65 +2370,109 @@ class _CommutersTabState extends State<_CommutersTab> {
         if (b == 'Unassigned') return -1;
         return a.compareTo(b);
       });
+    final accent = isStudent ? const Color(0xFF7C3AED) : const Color(0xFF2563EB);
 
     return SafeArea(
       child: Column(
         children: [
-          _CommutersHeader(
+          _AdminHeader(
             title: isStudent ? 'Students by Route' : 'Faculty by Route',
+            subtitle: _isLoading
+                ? 'Loading…'
+                : '${items.length} ${isStudent ? 'student' : 'faculty member'}${items.length == 1 ? '' : 's'}  •  ${routeNames.length} route${routeNames.length == 1 ? '' : 's'}',
+            icon: isStudent ? Icons.school_rounded : Icons.badge_rounded,
+            color: accent,
             onBack: () => setState(() => _view = _CommutersView.menu),
           ),
           Expanded(
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? const YmSkeletonList(count: 4, height: 84)
                 : routeNames.isEmpty
-                    ? Center(
-                        child: Text(
-                          isStudent ? 'No students with credentials yet.' : 'No faculty with credentials yet.',
-                          style: const TextStyle(color: Color(0xFF8892AA)),
-                        ),
+                    ? _AdminEmpty(
+                        icon: isStudent ? Icons.school_outlined : Icons.badge_outlined,
+                        color: accent,
+                        title: isStudent
+                            ? 'No students with credentials yet'
+                            : 'No faculty with credentials yet',
+                        subtitle: 'People appear here after the admin generates their login.',
                       )
                     : RefreshIndicator(
                         onRefresh: isStudent ? _fetchStudents : _fetchFaculty,
                         child: ListView.builder(
-                          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(20, 6, 20, 24),
                           itemCount: routeNames.length,
                           itemBuilder: (context, index) {
                             final routeName = routeNames[index];
                             final list = grouped[routeName]!;
                             final isUnassigned = routeName == 'Unassigned';
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: const Color(0xFFE8EAF0), width: 0.5),
-                              ),
-                              child: ListTile(
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                                leading: Container(
-                                  width: 42, height: 42,
-                                  decoration: BoxDecoration(
-                                    color: isUnassigned ? const Color(0xFFFEE2E2) : const Color(0xFFEEF2FF),
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Icon(
-                                    Icons.route_rounded,
-                                    color: isUnassigned ? Colors.redAccent : const Color(0xFF3B5BFF),
-                                    size: 20,
+                            final tint = isUnassigned ? Colors.redAccent : const Color(0xFF3B5BFF);
+                            return YmFadeSlide(
+                              index: index,
+                              child: Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: YmPressable(
+                                  scale: 0.98,
+                                  onTap: () {
+                                    setState(() {
+                                      _search = '';
+                                      _selectedRouteName = routeName;
+                                      _view = isStudent
+                                          ? _CommutersView.studentList
+                                          : _CommutersView.facultyList;
+                                    });
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.all(14),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(20),
+                                      boxShadow: _adminShadow,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 48,
+                                          height: 48,
+                                          decoration: BoxDecoration(
+                                            gradient: LinearGradient(
+                                              begin: Alignment.topLeft,
+                                              end: Alignment.bottomRight,
+                                              colors: [
+                                                tint.withOpacity(0.2),
+                                                tint.withOpacity(0.07)
+                                              ],
+                                            ),
+                                            borderRadius: BorderRadius.circular(15),
+                                          ),
+                                          child: Icon(Icons.route_rounded, color: tint, size: 22),
+                                        ),
+                                        const SizedBox(width: 14),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(routeName,
+                                                  style: const TextStyle(
+                                                      fontWeight: FontWeight.w800,
+                                                      fontSize: 15,
+                                                      color: Color(0xFF0F1B4C))),
+                                              const SizedBox(height: 3),
+                                              Text(
+                                                  '${list.length} ${isStudent ? 'student' : 'faculty member'}${list.length == 1 ? '' : 's'}',
+                                                  style: const TextStyle(
+                                                      fontSize: 12, color: Color(0xFF8892AA))),
+                                            ],
+                                          ),
+                                        ),
+                                        _InfoChip('${list.length}', color: tint),
+                                        const SizedBox(width: 6),
+                                        const Icon(Icons.chevron_right_rounded,
+                                            color: Color(0xFF8892AA)),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                                title: Text(routeName,
-                                    style: const TextStyle(fontWeight: FontWeight.w700, color: Color(0xFF0F1B4C))),
-                                subtitle: Text('${list.length} ${isStudent ? "student(s)" : "faculty member(s)"}',
-                                    style: const TextStyle(fontSize: 12, color: Color(0xFF8892AA))),
-                                trailing: const Icon(Icons.chevron_right_rounded, color: Color(0xFF8892AA)),
-                                onTap: () {
-                                  setState(() {
-                                    _selectedRouteName = routeName;
-                                    _view = isStudent ? _CommutersView.studentList : _CommutersView.facultyList;
-                                  });
-                                },
                               ),
                             );
                           },
@@ -1810,62 +2484,106 @@ class _CommutersTabState extends State<_CommutersTab> {
     );
   }
 
+  bool _isIncharge(Map<String, dynamic> f) =>
+      (f['routes'] as Map?)?['incharge_faculty_id'] == f['id'];
+
+  /// "  •  In-charge: Name" or "  •  No in-charge yet"
+  String _inchargeLine(List<Map<String, dynamic>> onRoute) {
+    for (final f in onRoute) {
+      if (_isIncharge(f)) return '  •  In-charge: ${f['faculty_name']}';
+    }
+    return '  •  No in-charge yet';
+  }
+
   Widget _buildPersonList({required bool isStudent}) {
     final items = isStudent ? _students : _faculty;
     final grouped = _groupByRoute(items);
     final routeName = _selectedRouteName ?? 'Unassigned';
-    final list = grouped[routeName] ?? [];
+    final all = grouped[routeName] ?? [];
+    final q = _search.trim().toLowerCase();
+    final list = q.isEmpty
+        ? all
+        : all.where((p) {
+            final fields = isStudent
+                ? [p['student_name'], p['enrollment_no'], p['student_email'], p['student_phone']]
+                : [p['faculty_name'], p['employee_id'], p['faculty_email'], p['faculty_phone']];
+            return fields.any((f) => (f ?? '').toString().toLowerCase().contains(q));
+          }).toList();
+    final accent = isStudent ? const Color(0xFF7C3AED) : const Color(0xFF2563EB);
 
     return SafeArea(
       child: Column(
         children: [
-          _CommutersHeader(
+          _AdminHeader(
             title: routeName,
-            onBack: () => setState(
-                () => _view = isStudent ? _CommutersView.studentRoutes : _CommutersView.facultyRoutes),
+            subtitle: '${all.length} ${isStudent ? 'student' : 'faculty member'}${all.length == 1 ? '' : 's'}'
+                '${isStudent ? '' : _inchargeLine(all)}',
+            icon: Icons.route_rounded,
+            color: accent,
+            onBack: () => setState(() {
+              _search = '';
+              _view = isStudent
+                  ? _CommutersView.studentRoutes
+                  : _CommutersView.facultyRoutes;
+            }),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+            child: TextField(
+              key: ValueKey('search_$routeName'),
+              onChanged: (v) => setState(() => _search = v),
+              style: const TextStyle(fontSize: 14, color: Color(0xFF0F1B4C)),
+              decoration: InputDecoration(
+                hintText: 'Search by name, ID, email or phone',
+                hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF8892AA)),
+                prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF8892AA)),
+                filled: true,
+                fillColor: Colors.white,
+                contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: const BorderSide(color: Color(0xFFF0E2C8)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: const BorderSide(color: Color(0xFF3B5BFF), width: 1.5),
+                ),
+              ),
+            ),
           ),
           Expanded(
             child: list.isEmpty
-                ? const Center(child: Text('No records found.', style: TextStyle(color: Color(0xFF8892AA))))
+                ? _AdminEmpty(
+                    icon: Icons.search_off_rounded,
+                    color: accent,
+                    title: q.isEmpty ? 'No records found' : 'No match for "$_search"',
+                    subtitle: q.isEmpty ? 'Nobody on this route yet.' : 'Try a different name or ID.',
+                  )
                 : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
                     itemCount: list.length,
                     itemBuilder: (context, index) {
                       final person = list[index];
-                      return isStudent
-                          ? _StudentDetailCard(student: person)
-                          : _FacultyDetailCard(faculty: person);
+                      return YmFadeSlide(
+                        index: index,
+                        child: isStudent
+                            ? _StudentDetailCard(
+                                student: person,
+                                onLinkCard: () =>
+                                    showLinkRfidSheet(context, person, onDone: _fetchStudents),
+                              )
+                            : _FacultyDetailCard(
+                                faculty: person,
+                                isIncharge: _isIncharge(person),
+                                onMakeIncharge: () => _assignIncharge(person),
+                                onRemoveIncharge: () => _removeIncharge(person),
+                                onResendCredentials: () =>
+                                    _callMakeIncharge(person, resend: true),
+                                onAssignRoute: () => _assignRoute(person),
+                              ),
+                      );
                     },
                   ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _CommutersHeader extends StatelessWidget {
-  final String title;
-  final VoidCallback onBack;
-
-  const _CommutersHeader({required this.title, required this.onBack});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 12, 20, 4),
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18, color: Color(0xFF0F1B4C)),
-            onPressed: onBack,
-          ),
-          Expanded(
-            child: Text(
-              title,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Color(0xFF0F1B4C)),
-              overflow: TextOverflow.ellipsis,
-            ),
           ),
         ],
       ),
@@ -1892,36 +2610,56 @@ class _CommuterOptionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return YmPressable(
+      scale: 0.98,
       onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
       child: Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFE8EAF0), width: 0.5),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 2))],
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Colors.white, iconBg.withOpacity(0.55)],
+          ),
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: _adminShadow,
         ),
         child: Row(
           children: [
             Container(
-              width: 52, height: 52,
-              decoration: BoxDecoration(color: iconBg, borderRadius: BorderRadius.circular(14)),
-              child: Icon(icon, color: iconColor, size: 26),
+              width: 58,
+              height: 58,
+              decoration: BoxDecoration(
+                color: iconBg,
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Icon(icon, color: iconColor, size: 28),
             ),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Color(0xFF0F1B4C))),
-                  const SizedBox(height: 2),
-                  Text(subtitle, style: const TextStyle(fontSize: 12, color: Color(0xFF8892AA))),
+                  Text(title,
+                      style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF0F1B4C))),
+                  const SizedBox(height: 3),
+                  Text(subtitle,
+                      style: const TextStyle(fontSize: 12, color: Color(0xFF8892AA))),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right_rounded, color: Color(0xFF8892AA)),
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: iconColor.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.chevron_right_rounded, color: iconColor),
+            ),
           ],
         ),
       ),
@@ -1931,7 +2669,8 @@ class _CommuterOptionCard extends StatelessWidget {
 
 class _StudentDetailCard extends StatelessWidget {
   final Map<String, dynamic> student;
-  const _StudentDetailCard({required this.student});
+  final VoidCallback? onLinkCard;
+  const _StudentDetailCard({required this.student, this.onLinkCard});
 
   @override
   Widget build(BuildContext context) {
@@ -1941,59 +2680,101 @@ class _StudentDetailCard extends StatelessWidget {
         : feeStatus == 'partial'
             ? const Color(0xFFD97706)
             : Colors.redAccent;
+    final name = (student['student_name'] ?? 'Unknown').toString();
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE8EAF0), width: 0.5),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: _adminShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Container(
-                width: 40, height: 40,
-                decoration: BoxDecoration(color: const Color(0xFFEDE9FE), borderRadius: BorderRadius.circular(10)),
-                child: const Icon(Icons.person_rounded, color: Color(0xFF7C3AED), size: 20),
-              ),
+              _Avatar(name: name, color: const Color(0xFF7C3AED), size: 46),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(student['student_name'] ?? 'Unknown',
-                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: Color(0xFF0F1B4C))),
-                    Text(student['enrollment_no'] ?? '—', style: const TextStyle(fontSize: 12, color: Color(0xFF8892AA))),
+                    Text(name,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15.5,
+                            color: Color(0xFF0F1B4C))),
+                    const SizedBox(height: 2),
+                    Text((student['enrollment_no'] ?? '—').toString(),
+                        style: const TextStyle(fontSize: 12, color: Color(0xFF8892AA))),
                   ],
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(color: feeColor.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
-                child: Text(feeStatus.toUpperCase(), style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: feeColor)),
-              ),
+              _InfoChip(feeStatus.toUpperCase(), color: feeColor),
             ],
           ),
-          const Divider(height: 24),
-          _InfoRow(label: 'Department', value: student['department']),
-          _InfoRow(label: 'Year', value: student['year']),
-          _InfoRow(label: 'Email', value: student['student_email']),
-          _InfoRow(label: 'Phone', value: student['student_phone']),
-          _InfoRow(label: 'Boarding Point', value: student['boarding_point']),
-          _InfoRow(label: 'Admission Date', value: student['admission_date']),
-          _InfoRow(label: 'Pass Expiry', value: student['pass_expiry']),
-          const SizedBox(height: 8),
-          const Text('Parent / Guardian',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF8892AA), letterSpacing: 0.4)),
-          const SizedBox(height: 6),
-          _InfoRow(label: 'Name', value: student['parent_name']),
-          _InfoRow(label: 'Relation', value: student['parent_relation']),
-          _InfoRow(label: 'Email', value: student['parent_email']),
-          _InfoRow(label: 'Phone', value: student['parent_phone']),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if ((student['department'] ?? '').toString().isNotEmpty)
+                _InfoChip(student['department'].toString(),
+                    icon: Icons.apartment_rounded, color: const Color(0xFF3B5BFF)),
+              if ((student['year'] ?? '').toString().isNotEmpty)
+                _InfoChip('Year ${student['year']}',
+                    icon: Icons.school_outlined, color: const Color(0xFF7C3AED)),
+              if ((student['boarding_point'] ?? '').toString().isNotEmpty)
+                _InfoChip(student['boarding_point'].toString(),
+                    icon: Icons.location_on_outlined, color: const Color(0xFF059669)),
+              if ((student['pass_expiry'] ?? '').toString().isNotEmpty)
+                _InfoChip('Pass till ${student['pass_expiry']}',
+                    icon: Icons.confirmation_number_outlined,
+                    color: const Color(0xFFD97706)),
+            ],
+          ),
+          const Divider(height: 22, color: Color(0xFFF0E2C8)),
+          _IconRow(icon: Icons.mail_outline_rounded, label: 'Email', value: student['student_email']),
+          _IconRow(icon: Icons.phone_outlined, label: 'Phone', value: student['student_phone']),
+          _IconRow(icon: Icons.event_outlined, label: 'Admitted', value: student['admission_date']),
+          Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.only(bottom: 4),
+              iconColor: const Color(0xFF8892AA),
+              title: const Text('Parent / Guardian',
+                  style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF0F1B4C))),
+              children: [
+                _IconRow(icon: Icons.person_outline_rounded, label: 'Name', value: student['parent_name']),
+                _IconRow(icon: Icons.family_restroom_rounded, label: 'Relation', value: student['parent_relation']),
+                _IconRow(icon: Icons.mail_outline_rounded, label: 'Email', value: student['parent_email']),
+                _IconRow(icon: Icons.phone_outlined, label: 'Phone', value: student['parent_phone']),
+              ],
+            ),
+          ),
+          if (onLinkCard != null) ...[
+            const SizedBox(height: 6),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: onLinkCard,
+                icon: const Icon(Icons.contactless_outlined, size: 18),
+                label: const Text('RFID card'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF7C3AED),
+                  side: const BorderSide(color: Color(0xFFDDD6FE)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -2002,67 +2783,144 @@ class _StudentDetailCard extends StatelessWidget {
 
 class _FacultyDetailCard extends StatelessWidget {
   final Map<String, dynamic> faculty;
-  const _FacultyDetailCard({required this.faculty});
+  final bool isIncharge;
+  final VoidCallback? onMakeIncharge;
+  final VoidCallback? onRemoveIncharge;
+  final VoidCallback? onResendCredentials;
+  final VoidCallback? onAssignRoute;
+  const _FacultyDetailCard({
+    required this.faculty,
+    this.isIncharge = false,
+    this.onMakeIncharge,
+    this.onRemoveIncharge,
+    this.onResendCredentials,
+    this.onAssignRoute,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final name = (faculty['faculty_name'] ?? 'Unknown').toString();
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE8EAF0), width: 0.5),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: _adminShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Container(
-                width: 40, height: 40,
-                decoration: BoxDecoration(color: const Color(0xFFDBEAFE), borderRadius: BorderRadius.circular(10)),
-                child: const Icon(Icons.badge_rounded, color: Color(0xFF2563EB), size: 20),
-              ),
+              _Avatar(name: name, color: const Color(0xFF2563EB), size: 46),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(faculty['faculty_name'] ?? 'Unknown',
-                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: Color(0xFF0F1B4C))),
-                    Text(faculty['employee_id'] ?? '—', style: const TextStyle(fontSize: 12, color: Color(0xFF8892AA))),
+                    Text(name,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15.5,
+                            color: Color(0xFF0F1B4C))),
+                    const SizedBox(height: 2),
+                    Text((faculty['employee_id'] ?? '—').toString(),
+                        style: const TextStyle(fontSize: 12, color: Color(0xFF8892AA))),
                   ],
                 ),
               ),
+              if (isIncharge)
+                const _InfoChip('In-charge',
+                    icon: Icons.verified_user_rounded, color: Color(0xFF059669)),
             ],
           ),
-          const Divider(height: 24),
-          _InfoRow(label: 'Department', value: faculty['department']),
-          _InfoRow(label: 'Email', value: faculty['faculty_email']),
-          _InfoRow(label: 'Phone', value: faculty['faculty_phone']),
-          _InfoRow(label: 'Boarding Point', value: faculty['boarding_point']),
-        ],
-      ),
-    );
-  }
-}
-
-class _InfoRow extends StatelessWidget {
-  final String label;
-  final dynamic value;
-  const _InfoRow({required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    final display = (value == null || value.toString().trim().isEmpty) ? '—' : value.toString();
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(width: 112, child: Text(label, style: const TextStyle(fontSize: 12, color: Color(0xFF8892AA)))),
-          Expanded(child: Text(display, style: const TextStyle(fontSize: 12.5, color: Color(0xFF0F1B4C), fontWeight: FontWeight.w500))),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if ((faculty['department'] ?? '').toString().isNotEmpty)
+                _InfoChip(faculty['department'].toString(),
+                    icon: Icons.apartment_rounded, color: const Color(0xFF3B5BFF)),
+              if ((faculty['boarding_point'] ?? '').toString().isNotEmpty)
+                _InfoChip(faculty['boarding_point'].toString(),
+                    icon: Icons.location_on_outlined, color: const Color(0xFF059669)),
+            ],
+          ),
+          const Divider(height: 22, color: Color(0xFFF0E2C8)),
+          _IconRow(icon: Icons.mail_outline_rounded, label: 'Email', value: faculty['faculty_email']),
+          _IconRow(icon: Icons.phone_outlined, label: 'Phone', value: faculty['faculty_phone']),
+          if (onAssignRoute != null && faculty['route_id'] == null) ...[
+            const SizedBox(height: 14),
+            Text(
+              'No route yet. Choose a route to see them under it, and to make them the in-charge.',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF8892AA), height: 1.4),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: onAssignRoute,
+                icon: const Icon(Icons.alt_route_rounded, size: 18),
+                label: const Text('Assign a route'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Ym.amber,
+                  foregroundColor: Ym.navy,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+              ),
+            ),
+          ] else if (onMakeIncharge != null) ...[
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: isIncharge
+                  ? Column(
+                      children: [
+                        FilledButton.icon(
+                          onPressed: onResendCredentials,
+                          icon: const Icon(Icons.forward_to_inbox_rounded, size: 18),
+                          label: const Text('Resend credentials'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Ym.amber,
+                            foregroundColor: Ym.navy,
+                            minimumSize: const Size.fromHeight(46),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: onRemoveIncharge,
+                          icon: const Icon(Icons.person_remove_rounded, size: 18),
+                          label: const Text('Remove in-charge'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFDC2626),
+                            side: const BorderSide(color: Color(0xFFF3B8B5)),
+                            minimumSize: const Size.fromHeight(46),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                          ),
+                        ),
+                      ],
+                    )
+                  : FilledButton.icon(
+                      onPressed: onMakeIncharge,
+                      icon: const Icon(Icons.verified_user_outlined, size: 18),
+                      label: const Text('Make in-charge'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Ym.amber,
+                        foregroundColor: Ym.navy,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                    ),
+            ),
+          ],
         ],
       ),
     );
@@ -2109,6 +2967,9 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
   bool _isSending = false;
   bool _isLoading = true;
   List<Map<String, dynamic>> _announcements = [];
+  int _view = 0; // 0 = compose, 1 = sent
+  String _filter = 'all'; // all | roles | bus | route
+  final Set<dynamic> _expanded = {};
 
   static const List<Map<String, dynamic>> _audiences = [
     {'value': 'all', 'label': 'Everyone', 'icon': Icons.campaign_rounded},
@@ -2116,6 +2977,7 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
     {'value': 'faculty', 'label': 'Faculty', 'icon': Icons.badge_rounded},
     {'value': 'driver', 'label': 'Drivers', 'icon': Icons.directions_bus_rounded},
     {'value': 'help_desk', 'label': 'Help Desk', 'icon': Icons.support_agent_rounded},
+    {'value': 'parent', 'label': 'Parents', 'icon': Icons.family_restroom_rounded},
   ];
 
   @override
@@ -2179,6 +3041,14 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
       _showSnack('Please add both a title and a message.');
       return;
     }
+    if (_targetType == 'bus' && _selectedBusId == null) {
+      _showSnack('Please choose a bus.');
+      return;
+    }
+    if (_targetType == 'route' && _selectedRouteId == null) {
+      _showSnack('Please choose a route.');
+      return;
+    }
     if (widget.institutionId == null) {
       _showSnack('Institution not loaded yet — try again in a moment.');
       return;
@@ -2212,6 +3082,7 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
         _selectedRouteId = null;
       });
       await _fetchAnnouncements();
+      if (mounted) setState(() => _view = 1); // show it in the Sent list
       _showSnack('Announcement sent ✅', isError: false);
     } catch (e) {
       _showSnack('Failed to send: $e');
@@ -2269,6 +3140,8 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
         return const Color(0xFFD97706);
       case 'help_desk':
         return const Color(0xFF059669);
+      case 'parent':
+        return const Color(0xFFDB2777);
       default:
         return const Color(0xFF3B5BFF);
     }
@@ -2307,304 +3180,424 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
     );
   }
 
+  String _targetLabel(String target) {
+    if (target.startsWith('bus_')) {
+      final id = target.substring(4);
+      final match = widget.buses.where((b) => b['id'].toString() == id);
+      return match.isEmpty ? 'A bus' : 'Bus ${match.first['bus_number']}';
+    }
+    if (target.startsWith('route_')) {
+      final id = target.substring(6);
+      final match = widget.routes.where((r) => r['id'].toString() == id);
+      return match.isEmpty ? 'A route' : (match.first['route_name'] ?? 'A route').toString();
+    }
+    return _audienceLabel(target);
+  }
+
+  String _ago(String? iso) {
+    final d = DateTime.tryParse(iso ?? '')?.toLocal();
+    if (d == null) return '';
+    final diff = DateTime.now().difference(d);
+    if (diff.inMinutes < 1) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
+    if (diff.inHours < 24) return '${diff.inHours} h ago';
+    if (diff.inDays < 7) return '${diff.inDays} d ago';
+    return '${d.day}/${d.month}/${d.year}';
+  }
+
+  String get _audienceSummary {
+    if (_targetType == 'bus') {
+      final m = widget.buses.where((b) => b['id'] == _selectedBusId);
+      return m.isEmpty
+          ? 'Choose a bus below'
+          : 'Bus ${m.first['bus_number']}: its students and faculty';
+    }
+    if (_targetType == 'route') {
+      final m = widget.routes.where((r) => r['id'] == _selectedRouteId);
+      return m.isEmpty
+          ? 'Choose a route below'
+          : '${m.first['route_name']}: its students and faculty';
+    }
+    return _targetRole == 'all' ? 'Everyone' : _audienceLabel(_targetRole);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: const Color(0xFFFFFBF0),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+      color: Ym.creamTop,
+      child: SafeArea(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Announcements',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Color(0xFF0F1B4C))),
-            const SizedBox(height: 4),
-            const Text('Broadcast updates to everyone on campus transport',
-                style: TextStyle(fontSize: 13, color: Color(0xFF8892AA))),
-            const SizedBox(height: 20),
+            _AdminHeader(
+              title: 'Announcements',
+              subtitle: _announcements.isEmpty
+                  ? 'Broadcast updates to campus transport'
+                  : '${_announcements.length} sent',
+              icon: Icons.campaign_rounded,
+            ),
+            _viewSwitch(),
+            Expanded(child: _view == 0 ? _composeView() : _sentView()),
+          ],
+        ),
+      ),
+    );
+  }
 
-            // ===== COMPOSE SECTION =====
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: const Color(0xFFE8EAF0), width: 0.5),
-                boxShadow: [
-                  BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 16, offset: const Offset(0, 6)),
-                ],
-              ),
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+  Widget _viewSwitch() {
+    Widget tab(int i, String label, IconData icon) {
+      final on = _view == i;
+      return Expanded(
+        child: YmPressable(
+          onTap: () => setState(() => _view = i),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(vertical: 11),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              gradient: on ? const LinearGradient(colors: [Ym.amber, Ym.amberDark]) : null,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 17, color: on ? Ym.navy : Ym.grey),
+                const SizedBox(width: 6),
+                Text(label,
+                    style: Ym.t(13, color: on ? Ym.navy : Ym.grey, w: FontWeight.w800)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 4, 20, 10),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: _adminShadow,
+      ),
+      child: Row(
+        children: [
+          tab(0, 'Compose', Icons.edit_note_rounded),
+          tab(1, 'Sent (${_announcements.length})', Icons.history_rounded),
+        ],
+      ),
+    );
+  }
+
+  Widget _composeView() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 40),
+      children: [
+        YmFadeSlide(
+          index: 0,
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(26),
+              boxShadow: _adminShadow,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: _titleCtrl,
+                  maxLength: 80,
+                  style: const TextStyle(
+                      fontSize: 14, color: Color(0xFF0F1B4C), fontWeight: FontWeight.w600),
+                  decoration: _composerFieldDecoration(
+                    label: 'Title',
+                    hint: 'e.g. Route 4 delayed by 15 minutes',
+                    icon: Icons.title_rounded,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _bodyCtrl,
+                  maxLength: 500,
+                  maxLines: 5,
+                  style: const TextStyle(fontSize: 14, color: Color(0xFF0F1B4C)),
+                  decoration: _composerFieldDecoration(
+                    label: 'Message',
+                    hint: 'Write the announcement details...',
+                    icon: Icons.notes_rounded,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text('SEND TO',
+                    style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 11,
+                        color: Color(0xFF8892AA),
+                        letterSpacing: 0.6)),
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFFBF0),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFF0E2C8)),
+                  ),
+                  child: Row(
                     children: [
-                      _iconBadge(Icons.campaign_rounded, const Color(0xFFFEF3C7), const Color(0xFFD97706)),
-                      const SizedBox(width: 14),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Create Announcement',
-                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Color(0xFF0F1B4C))),
-                            SizedBox(height: 2),
-                            Text('Compose a broadcast and choose who sees it',
-                                style: TextStyle(fontSize: 12, color: Color(0xFF8892AA))),
-                          ],
-                        ),
+                      _buildTargetTypeButton('role', 'Role', Icons.groups_rounded),
+                      _buildTargetTypeButton('bus', 'Bus', Icons.directions_bus_rounded),
+                      _buildTargetTypeButton('route', 'Route', Icons.alt_route_rounded),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                if (_targetType == 'role') ...[
+                  _buildRoleSelector(),
+                ] else if (_targetType == 'bus') ...[
+                  _buildBusSelector(),
+                ] else if (_targetType == 'route') ...[
+                  _buildRouteSelector(),
+                ],
+                const SizedBox(height: 18),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Ym.amber.withOpacity(0.14),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.send_rounded, size: 16, color: Ym.amberDark),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text('Goes to: $_audienceSummary',
+                            style: Ym.t(12.5, w: FontWeight.w700)),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 20),
-                  TextField(
-                    controller: _titleCtrl,
-                    style: const TextStyle(fontSize: 14, color: Color(0xFF0F1B4C), fontWeight: FontWeight.w600),
-                    decoration: _composerFieldDecoration(
-                      label: 'Title',
-                      hint: 'e.g. Route 4 delayed by 15 minutes',
-                      icon: Icons.title_rounded,
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: _bodyCtrl,
-                    style: const TextStyle(fontSize: 14, color: Color(0xFF0F1B4C)),
-                    maxLines: 4,
-                    decoration: _composerFieldDecoration(
-                      label: 'Message',
-                      hint: 'Write the announcement details...',
-                      icon: Icons.notes_rounded,
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-                  const Text('SEND TO', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11, color: Color(0xFF8892AA), letterSpacing: 0.6)),
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: const Color(0xFFE8EAF0)),
-                    ),
-                    child: Row(
-                      children: [
-                        _buildTargetTypeButton('role', 'Role', Icons.groups_rounded),
-                        _buildTargetTypeButton('bus', 'Bus', Icons.directions_bus_rounded),
-                        _buildTargetTypeButton('route', 'Route', Icons.alt_route_rounded),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  if (_targetType == 'role') ...[
-                    _buildRoleSelector(),
-                  ] else if (_targetType == 'bus') ...[
-                    _buildBusSelector(),
-                  ] else if (_targetType == 'route') ...[
-                    _buildRouteSelector(),
-                  ],
-                  const SizedBox(height: 22),
-                  Container(
+                ),
+                const SizedBox(height: 18),
+                YmPressable(
+                  onTap: _isSending ? null : _sendAnnouncement,
+                  child: Container(
                     width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        begin: Alignment.centerLeft,
-                        end: Alignment.centerRight,
-                        colors: [Color(0xFF3B5BFF), Color(0xFF6B8CFF)],
-                      ),
-                      borderRadius: BorderRadius.circular(16),
+                      gradient: const LinearGradient(colors: [Ym.amber, Ym.amberDark]),
+                      borderRadius: BorderRadius.circular(18),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF3B5BFF).withOpacity(0.28),
+                          color: Ym.amberDark.withOpacity(0.35),
                           blurRadius: 16,
                           offset: const Offset(0, 8),
                         ),
                       ],
                     ),
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(16),
-                        onTap: _isSending ? null : _sendAnnouncement,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          child: Center(
-                            child: _isSending
-                                ? const SizedBox(
-                                    height: 20,
-                                    width: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                                    ),
-                                  )
-                                : const Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(Icons.send_rounded, size: 18, color: Colors.white),
-                                      SizedBox(width: 10),
-                                      Text(
-                                        'Send Announcement',
-                                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white),
-                                      ),
-                                    ],
-                                  ),
-                          ),
+                    child: Center(
+                      child: _isSending
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Ym.navy),
+                              ),
+                            )
+                          : const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.send_rounded, size: 18, color: Ym.navy),
+                                SizedBox(width: 10),
+                                Text('Send Announcement',
+                                    style: TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w800,
+                                        color: Ym.navy)),
+                              ],
+                            ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _sentView() {
+    final list = _announcements.where((a) {
+      final t = (a['target_role'] ?? 'all').toString();
+      switch (_filter) {
+        case 'roles':
+          return !t.startsWith('bus_') && !t.startsWith('route_');
+        case 'bus':
+          return t.startsWith('bus_');
+        case 'route':
+          return t.startsWith('route_');
+        default:
+          return true;
+      }
+    }).toList();
+
+    return RefreshIndicator(
+      color: Ym.amber,
+      onRefresh: _fetchAnnouncements,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(20, 2, 20, 40),
+        children: [
+          Wrap(
+            spacing: 8,
+            children: [
+              for (final f in const [
+                ('all', 'All'),
+                ('roles', 'Roles'),
+                ('bus', 'Bus'),
+                ('route', 'Route'),
+              ])
+                ChoiceChip(
+                  label: Text(f.$2),
+                  selected: _filter == f.$1,
+                  selectedColor: Ym.amber.withOpacity(0.3),
+                  onSelected: (_) => setState(() => _filter = f.$1),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 50),
+              child: Center(child: CircularProgressIndicator(color: Ym.amber)),
+            )
+          else if (list.isEmpty)
+            SizedBox(
+              height: 340,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const _AdminEmpty(
+                    icon: Icons.campaign_outlined,
+                    title: 'No announcements here',
+                    subtitle: 'Announcements you send will appear in this list.',
+                  ),
+                  YmButton(
+                    label: 'Write an announcement',
+                    icon: Icons.edit_note_rounded,
+                    expanded: false,
+                    onPressed: () => setState(() => _view = 0),
+                  ),
+                ],
+              ),
+            )
+          else
+            for (var index = 0; index < list.length; index++)
+              _sentCard(list[index], index),
+        ],
+      ),
+    );
+  }
+
+  Widget _sentCard(Map<String, dynamic> ann, int index) {
+    final targetRole = (ann['target_role'] ?? 'all').toString();
+    final isBusTarget = targetRole.startsWith('bus_');
+    final isRouteTarget = targetRole.startsWith('route_');
+    final chipColor = isBusTarget
+        ? const Color(0xFF2563EB)
+        : isRouteTarget
+            ? const Color(0xFF7C3AED)
+            : _audienceColor(targetRole);
+    final chipIcon = isBusTarget
+        ? Icons.directions_bus_rounded
+        : isRouteTarget
+            ? Icons.alt_route_rounded
+            : _audienceIcon(targetRole);
+    final body = (ann['body'] ?? '').toString();
+    final open = _expanded.contains(ann['id']);
+    final long = body.length > 110;
+
+    return YmFadeSlide(
+      index: index > 6 ? 6 : index,
+      child: GestureDetector(
+        onTap: long
+            ? () => setState(() {
+                  if (open) {
+                    _expanded.remove(ann['id']);
+                  } else {
+                    _expanded.add(ann['id']);
+                  }
+                })
+            : null,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: _adminShadow,
+            border: Border(left: BorderSide(color: chipColor, width: 5)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _iconBadge(chipIcon, chipColor.withOpacity(0.12), chipColor,
+                      size: 40, iconSize: 19),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(ann['title'] ?? 'Announcement',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14.5,
+                                color: Color(0xFF0F1B4C))),
+                        const SizedBox(height: 5),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          children: [
+                            _InfoChip('To: ${_targetLabel(targetRole)}', color: chipColor),
+                            _InfoChip(_ago(ann['created_at']?.toString()),
+                                icon: Icons.access_time_rounded,
+                                color: const Color(0xFF8892AA)),
+                          ],
                         ),
-                      ),
+                      ],
+                    ),
+                  ),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(20),
+                    onTap: () => _deleteAnnouncement(ann['id']),
+                    child: const Padding(
+                      padding: EdgeInsets.all(6),
+                      child: Icon(Icons.delete_outline_rounded,
+                          color: Colors.redAccent, size: 20),
                     ),
                   ),
                 ],
               ),
-            ),
-
-            const SizedBox(height: 28),
-            Row(
-              children: [
-                const Expanded(
-                  child: Text('Recent Announcements',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Color(0xFF0F1B4C))),
-                ),
-                if (_announcements.isNotEmpty)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFEEF2FF),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text('${_announcements.length}',
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF3B5BFF))),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            if (_isLoading)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 40),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else if (_announcements.isEmpty)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 40),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: const Color(0xFFE8EAF0), width: 0.5),
-                ),
-                child: const Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.campaign_outlined, size: 44, color: Color(0xFF8892AA)),
-                    SizedBox(height: 12),
-                    Text('No announcements yet',
-                        style: TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF0F1B4C))),
-                    SizedBox(height: 4),
-                    Text('Sent announcements will show up here', style: TextStyle(color: Color(0xFF8892AA), fontSize: 12)),
-                  ],
-                ),
-              )
-            else
-              ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: _announcements.length,
-                itemBuilder: (context, index) {
-                  final ann = _announcements[index];
-                  final targetRole = (ann['target_role'] ?? 'all').toString();
-                  final isBusTarget = targetRole.startsWith('bus_');
-                  final isRouteTarget = targetRole.startsWith('route_');
-                  final chipColor = isBusTarget
-                      ? const Color(0xFF2563EB)
-                      : isRouteTarget
-                          ? const Color(0xFF7C3AED)
-                          : _audienceColor(targetRole);
-                  final chipIcon = isBusTarget
-                      ? Icons.directions_bus_rounded
-                      : isRouteTarget
-                          ? Icons.alt_route_rounded
-                          : _audienceIcon(targetRole);
-                  final chipLabel = isBusTarget
-                      ? 'Bus'
-                      : isRouteTarget
-                          ? 'Route'
-                          : _audienceLabel(targetRole);
-
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: const Color(0xFFE8EAF0), width: 0.5),
-                      boxShadow: [
-                        BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 3)),
-                      ],
-                    ),
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _iconBadge(chipIcon, chipColor.withOpacity(0.12), chipColor, size: 38, iconSize: 18),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    ann['title'] ?? 'Announcement',
-                                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5, color: Color(0xFF0F1B4C)),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                    decoration: BoxDecoration(
-                                      color: chipColor.withOpacity(0.1),
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: Text(
-                                      chipLabel,
-                                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: chipColor),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            InkWell(
-                              borderRadius: BorderRadius.circular(20),
-                              onTap: () => _deleteAnnouncement(ann['id']),
-                              child: const Padding(
-                                padding: EdgeInsets.all(4),
-                                child: Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 19),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          ann['body'] ?? '',
-                          style: TextStyle(fontSize: 13, color: Colors.grey[700], height: 1.5),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Icon(Icons.access_time_rounded, size: 12, color: Colors.grey[400]),
-                            const SizedBox(width: 4),
-                            Text(
-                              _formatDate(ann['created_at']),
-                              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  );
-                },
+              const SizedBox(height: 10),
+              AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                alignment: Alignment.topCenter,
+                child: Text(body,
+                    style: TextStyle(fontSize: 13, color: Colors.grey[700], height: 1.5),
+                    maxLines: open ? null : 3,
+                    overflow: open ? TextOverflow.visible : TextOverflow.ellipsis),
               ),
-          ],
+              if (long)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(open ? 'Show less' : 'Read more',
+                      style: Ym.t(12, color: Ym.amberDark, w: FontWeight.w800)),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -2628,13 +3621,13 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 15, color: isActive ? const Color(0xFF3B5BFF) : const Color(0xFF8892AA)),
+              Icon(icon, size: 15, color: isActive ? Ym.amberDark : const Color(0xFF8892AA)),
               const SizedBox(width: 6),
               Text(
                 label,
                 style: TextStyle(
                   fontWeight: FontWeight.w700,
-                  color: isActive ? const Color(0xFF3B5BFF) : const Color(0xFF8892AA),
+                  color: isActive ? Ym.amberDark : const Color(0xFF8892AA),
                   fontSize: 12.5,
                 ),
               ),
@@ -2652,6 +3645,7 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
       ('faculty', 'Faculty', Icons.badge_rounded, const Color(0xFF2563EB)),
       ('driver', 'Drivers', Icons.directions_car_rounded, const Color(0xFFD97706)),
       ('help_desk', 'Help Desk', Icons.support_agent_rounded, const Color(0xFF059669)),
+      ('parent', 'Parents', Icons.family_restroom_rounded, const Color(0xFFDB2777)),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2872,26 +3866,34 @@ class _NavItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isActive = index == currentIndex;
-    return GestureDetector(
+    return YmPressable(
       onTap: () => onTap(index),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+        margin: const EdgeInsets.symmetric(horizontal: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 9),
         decoration: BoxDecoration(
-          color: isActive ? const Color(0xFF3B5BFF).withOpacity(0.1) : Colors.transparent,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(22),
+          gradient: isActive
+              ? const LinearGradient(colors: [Ym.amber, Ym.amberDark])
+              : null,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: isActive ? const Color(0xFF3B5BFF) : const Color(0xFF8892AA), size: 22),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 9, fontWeight: isActive ? FontWeight.w700 : FontWeight.w500, color: isActive ? const Color(0xFF3B5BFF) : const Color(0xFF8892AA)),
+            Icon(icon, color: isActive ? Ym.navy : Ym.grey, size: 22),
+            const SizedBox(height: 3),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                label,
+                maxLines: 1,
+                style: TextStyle(
+                    fontSize: 9.5,
+                    fontWeight: isActive ? FontWeight.w800 : FontWeight.w600,
+                    color: isActive ? Ym.navy : Ym.grey),
+              ),
             ),
           ],
         ),
@@ -2911,6 +3913,8 @@ class _HomeTab extends StatelessWidget {
   final int totalRoutes;
   final int totalDrivers;
   final int helpdeskCount;
+  final int tripsToday;
+  final int tripsRunning;
   final int pendingCredentials;
   final bool isLoading;
   final RefreshCallback onRefresh;
@@ -2934,6 +3938,8 @@ class _HomeTab extends StatelessWidget {
     required this.totalRoutes,
     required this.totalDrivers,
     required this.helpdeskCount,
+    this.tripsToday = 0,
+    this.tripsRunning = 0,
     required this.pendingCredentials,
     required this.isLoading,
     required this.onRefresh,
@@ -2950,35 +3956,8 @@ class _HomeTab extends StatelessWidget {
     required this.onUpdateStagedItem,
   });
 
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: RefreshIndicator(
-        onRefresh: onRefresh,
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    _TopIconButton(
-                      icon: Icons.mail_outline_rounded,
-                      label: 'Complaints',
-                      onTap: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Complaints screen — Coming Soon')),
-                        );
-                      },
-                    ),
-                    _TopIconButton(
-                      icon: Icons.note_add_rounded,
-                      label: 'CSV Upload',
-                      isLoading: isProcessingExcel,
-                      onTap: () {
+  // The CSV upload instructions, then the file chooser (logic unchanged).
+  void _showCsvDialog(BuildContext context) {
                         showDialog(
                           context: context,
                           builder: (context) => Dialog(
@@ -3088,44 +4067,246 @@ class _HomeTab extends StatelessWidget {
                             ),
                           ),
                         );
-                      },
-                    ),
-                    _TopIconButton(
-                      icon: Icons.badge_outlined,
-                      label: 'Pending\nCredentials',
-                      badgeCount: pendingCredentials,
-                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const PendingCredentialsScreen())),
-                    ),
-                    _TopIconButton(
-                      icon: Icons.notifications_outlined,
-                      label: 'Notifications',
-                      badgeCount: pendingRequests.length,
-                      onTap: onBellTap,
-                    ),
-                    _TopIconButton(
-                      icon: Icons.logout_rounded,
-                      label: 'Logout',
-                      iconColor: Colors.redAccent,
-                      onTap: onLogout,
-                    ),
-                  ],
+  }
+
+  void _open(BuildContext context, Widget screen) =>
+      Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+
+  Widget _header(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(2.5),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const LinearGradient(colors: [Ym.amber, Ym.amberDark]),
+            boxShadow: Ym.shadow(Ym.amberDark, 0.3),
+          ),
+          child: GestureDetector(
+            onTap: () => showAccountSheet(context,
+                roleLabel: 'Admin', onLogout: () async => onLogout()),
+            child: const CircleAvatar(
+              radius: 21,
+              backgroundColor: Colors.white,
+              child: Icon(Icons.admin_panel_settings_rounded,
+                  color: Ym.amberDark, size: 24),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              RichText(
+                text: TextSpan(children: [
+                  TextSpan(text: 'YATRA ', style: Ym.h(16)),
+                  TextSpan(text: 'MITRA', style: Ym.h(16, color: Ym.green)),
+                ]),
+              ),
+              Text('Admin', style: Ym.t(11.5, color: Ym.grey, w: FontWeight.w600)),
+            ],
+          ),
+        ),
+        YmRoundButton(
+            icon: Iconsax.notification,
+            badge: pendingRequests.length,
+            onTap: onBellTap),
+        const SizedBox(width: 10),
+        YmRoundButton(icon: Iconsax.logout, color: Ym.red, onTap: onLogout),
+      ],
+    );
+  }
+
+  Widget _hero() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFFF6E3), Color(0xFFFFE3AE)],
+        ),
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(color: Ym.amber.withOpacity(0.45), width: 1.2),
+        boxShadow: Ym.shadow(Ym.amberDark, 0.25),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const YmPulse(color: Ym.green, size: 7),
+              const SizedBox(width: 8),
+              Text('SMART TRANSPORT MANAGEMENT',
+                  style: Ym.t(10.5, color: Ym.amberDark, w: FontWeight.w800)
+                      .copyWith(letterSpacing: 0.8)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(institutionName.isEmpty ? 'Loading...' : institutionName,
+              style: Ym.h(22)),
+          if (institutionCity.isNotEmpty) ...[
+            const SizedBox(height: 5),
+            Row(
+              children: [
+                const Icon(Icons.location_on_outlined, size: 15, color: Ym.grey),
+                const SizedBox(width: 4),
+                Text(institutionCity, style: Ym.t(13, color: Ym.grey)),
+              ],
+            ),
+          ],
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: SizedBox(
+              height: 150,
+              width: double.infinity,
+              child: Image.asset(
+                'assets/images/admin_dashboard_illustration.png',
+                fit: BoxFit.cover,
+                alignment: Alignment.topCenter,
+                errorBuilder: (context, error, stackTrace) => Container(
+                  color: Ym.amber.withOpacity(0.18),
+                  child: const Icon(Icons.directions_bus_rounded,
+                      size: 44, color: Ym.amberDark),
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text('Welcome to', style: TextStyle(fontSize: 16, color: Color(0xFF8892AA))),
-                    Text('Admin Dashboard 👋', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: Color(0xFF0F1B4C))),
-                  ],
-                ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _action(Widget tile, String label, VoidCallback onTap) => Expanded(
+        child: YmPressable(
+          onTap: onTap,
+          child: Column(
+            children: [
+              tile,
+              const SizedBox(height: 9),
+              Text(label,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  style: Ym.t(11.5, w: FontWeight.w700)),
+            ],
+          ),
+        ),
+      );
+
+  Widget _quickActions(BuildContext context) {
+    return YmCard(
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 8),
+      child: Column(
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _action(
+                  const YmGradientTile(icon: Icons.mail_outline_rounded, color: Ym.blue),
+                  'Inbox',
+                  () => _open(context, const InboxScreen(isAdmin: true))),
+              _action(
+                  const YmGradientTile(
+                      icon: Icons.notifications_active_outlined, color: Ym.red),
+                  'Alerts',
+                  () => _open(context, const AdminAlertsScreen())),
+              _action(
+                  const YmGradientTile(icon: Iconsax.bus, color: Ym.green),
+                  'Buses',
+                  () => _open(context, const AdminBusesScreen())),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _action(
+                  const YmGradientTile(
+                      icon: Icons.account_balance_wallet_outlined,
+                      color: Ym.amberDark),
+                  'Fees & Years',
+                  () => _open(context, const AdminFeesScreen())),
+              _action(
+                  isProcessingExcel
+                      ? const YmGradientTile(
+                          icon: null,
+                          color: Ym.purple,
+                          child: SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2.4, color: Colors.white)))
+                      : const YmGradientTile(
+                          icon: Icons.note_add_rounded, color: Ym.purple),
+                  'CSV Upload',
+                  () => _showCsvDialog(context)),
+              _action(
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      const YmGradientTile(
+                          icon: Icons.badge_outlined, color: Color(0xFF0EA5E9)),
+                      if (pendingCredentials > 0)
+                        Positioned(
+                          right: -4,
+                          top: -4,
+                          child: Container(
+                            constraints: const BoxConstraints(minWidth: 20),
+                            height: 20,
+                            padding: const EdgeInsets.symmetric(horizontal: 5),
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: Ym.red,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Colors.white, width: 1.8),
+                            ),
+                            child: Text('$pendingCredentials',
+                                style: Ym.t(10.5,
+                                    color: Colors.white, w: FontWeight.w800)),
+                          ),
+                        ),
+                    ],
+                  ),
+                  'Pending Credentials',
+                  () => _open(context, const PendingCredentialsScreen())),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      bottom: false,
+      child: RefreshIndicator(
+        color: Ym.amber,
+        onRefresh: onRefresh,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
+          children: [
+            YmFadeSlide(index: 0, child: _header(context)),
+            const SizedBox(height: 22),
+            YmFadeSlide(
+              index: 1,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Welcome to', style: Ym.t(15, color: Ym.grey)),
+                  const SizedBox(height: 3),
+                  Text('Admin Dashboard', style: Ym.h(30)),
+                ],
               ),
-              const SizedBox(height: 20),
-              const SizedBox(height: 16),
+            ),
+            const SizedBox(height: 18),
               if (stagedExcelRoutes.isNotEmpty) ...[
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  padding: EdgeInsets.zero,
                   child: Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -3178,184 +4359,120 @@ class _HomeTab extends StatelessWidget {
                 ),
                 const SizedBox(height: 20),
               ],
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Container(
-                  width: double.infinity,
-                  // CHANGED: added bottom padding (was 0) so the image panel
-                  // below no longer sits flush against the card's bottom edge.
-                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFDF3DC),
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: const Color(0xFFF5E6BF), width: 1),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 10, height: 10,
-                            decoration: const BoxDecoration(color: Color(0xFF3B5BFF), shape: BoxShape.circle),
-                          ),
-                          const SizedBox(width: 8),
-                          RichText(
-                            text: const TextSpan(
-                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, letterSpacing: 0.5),
-                              children: [
-                                TextSpan(text: 'YATRA ', style: TextStyle(color: Color(0xFF0F1B4C))),
-                                TextSpan(text: 'MITRA', style: TextStyle(color: Color(0xFF16A34A))),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        institutionName.isEmpty ? 'Loading...' : institutionName,
-                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Color(0xFF0F1B4C)),
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          const Icon(Icons.location_on_outlined, size: 14, color: Color(0xFF8892AA)),
-                          const SizedBox(width: 4),
-                          Text(institutionCity, style: const TextStyle(fontSize: 13, color: Color(0xFF8892AA))),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Smart college transport management system for a safer journey.',
-                        style: TextStyle(fontSize: 13, color: Color(0xFF6B7A99), height: 1.4),
-                      ),
-                      const SizedBox(height: 12),
-                      // Cropped to the top portion of the illustration (through
-                      // the chair) rather than the full image, so the bottom
-                      // "ADMIN DASHBOARD" text/dots from the source art don't show.
-                      // CHANGED: rounded on all sides (was bottom-only) and given
-                      // a small top margin now that it's not flush to the card
-                      // bottom; height reduced from 380 -> 200 so the panel reads
-                      // as a compact rectangle instead of a tall, elongated strip.
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(20),
-                        child: Container(
-                          margin: const EdgeInsets.only(top: 12),
-                          width: double.infinity,
-                          height: 200,
-                          child: Image.asset(
-                            'assets/images/admin_dashboard_illustration.png',
-                            fit: BoxFit.cover,
-                            alignment: Alignment.topCenter,
-                            errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
+
+            YmFadeSlide(index: 2, child: _hero()),
+            const SizedBox(height: 26),
+            YmFadeSlide(index: 3, child: _quickActions(context)),
+            const SizedBox(height: 26),
+            const YmFadeSlide(index: 4, child: YmSectionTitle('Overview')),
+            if (isLoading)
               const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 20),
-                child: Text('Overview', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Color(0xFF0F1B4C))),
+                padding: EdgeInsets.symmetric(vertical: 30),
+                child: Center(child: CircularProgressIndicator(color: Ym.amber)),
+              )
+            else
+              YmFadeSlide(
+                index: 4,
+                child: GridView.count(
+                  crossAxisCount: 2,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  crossAxisSpacing: 14,
+                  mainAxisSpacing: 14,
+                  childAspectRatio: 0.98,
+                  children: [
+                    _StatCard(icon: Icons.people_rounded, iconBg: const Color(0xFFEDE9FE), iconColor: const Color(0xFF7C3AED), title: 'Total Commuters', value: '$totalStudents', subtitle: 'Students & Faculties', badge: 'Active', badgeColor: const Color(0xFF059669)),
+                    _StatCard(icon: Icons.support_agent_rounded, iconBg: const Color(0xFFD1FAE5), iconColor: const Color(0xFF059669), title: 'Help Desk Accounts', value: '$helpdeskCount', subtitle: 'Active Help Desk', badge: 'Active', badgeColor: const Color(0xFF059669)),
+                    _StatCard(icon: Icons.directions_bus_rounded, iconBg: const Color(0xFFDBEAFE), iconColor: const Color(0xFF2563EB), title: 'Total Buses', value: '$totalBuses', subtitle: 'Active Buses', badge: 'On Route', badgeColor: const Color(0xFF2563EB)),
+                    _StatCard(icon: Icons.person_rounded, iconBg: const Color(0xFFFEF3C7), iconColor: const Color(0xFFD97706), title: 'Total Drivers', value: '$totalDrivers', subtitle: 'Active Drivers', badge: 'Active', badgeColor: const Color(0xFFD97706)),
+                    _StatCard(icon: Icons.route_rounded, iconBg: const Color(0xFFEDE9FE), iconColor: const Color(0xFF7C3AED), title: 'Total Routes', value: '$totalRoutes', subtitle: 'Active Routes', badge: 'Synced', badgeColor: const Color(0xFF7C3AED)),
+                    _StatCard(icon: Icons.bar_chart_rounded, iconBg: const Color(0xFFD1FAE5), iconColor: const Color(0xFF059669), title: 'Trips Today', value: '$tripsToday', subtitle: tripsRunning > 0 ? '$tripsRunning running now' : 'Completed Trips', badge: tripsRunning > 0 ? 'Live' : 'Active', badgeColor: const Color(0xFF059669)),
+                  ],
+                ),
               ),
-              const SizedBox(height: 16),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : GridView.count(
-                        crossAxisCount: 2,
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        crossAxisSpacing: 14,
-                        mainAxisSpacing: 14,
-                        childAspectRatio: 1.1,
+            const SizedBox(height: 20),
+            YmFadeSlide(
+              index: 5,
+              child: YmCard(
+                onTap: () => _open(context, const AdminAttendanceScreen()),
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    const YmIconBadge(icon: Icons.fact_check_rounded, size: 46),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _StatCard(icon: Icons.people_rounded, iconBg: const Color(0xFFEDE9FE), iconColor: const Color(0xFF7C3AED), title: 'Total Commuters', value: '$totalStudents', subtitle: 'Students & Faculties', badge: 'Active', badgeColor: const Color(0xFF059669)),
-                          _StatCard(icon: Icons.support_agent_rounded, iconBg: const Color(0xFFD1FAE5), iconColor: const Color(0xFF059669), title: 'Help Desk Accounts', value: '$helpdeskCount', subtitle: 'Active Help Desk', badge: 'Active', badgeColor: const Color(0xFF059669)),
-                          _StatCard(icon: Icons.directions_bus_rounded, iconBg: const Color(0xFFDBEAFE), iconColor: const Color(0xFF2563EB), title: 'Total Buses', value: '$totalBuses', subtitle: 'Active Buses', badge: 'On Route', badgeColor: const Color(0xFF2563EB)),
-                          _StatCard(icon: Icons.person_rounded, iconBg: const Color(0xFFFEF3C7), iconColor: const Color(0xFFD97706), title: 'Total Drivers', value: '$totalDrivers', subtitle: 'Active Drivers', badge: 'Active', badgeColor: const Color(0xFFD97706)),
-                          _StatCard(icon: Icons.route_rounded, iconBg: const Color(0xFFEDE9FE), iconColor: const Color(0xFF7C3AED), title: 'Total Routes', value: '$totalRoutes', subtitle: 'Active Routes', badge: 'Synced', badgeColor: const Color(0xFF7C3AED)),
-                          _StatCard(icon: Icons.bar_chart_rounded, iconBg: const Color(0xFFD1FAE5), iconColor: const Color(0xFF059669), title: 'Trips Today', value: '0', subtitle: 'Completed Trips', badge: 'Active', badgeColor: const Color(0xFF059669)),
+                          Text('Attendance', style: Ym.h(14.5)),
+                          const SizedBox(height: 2),
+                          Text('Who boarded and who was absent, route by route',
+                              style: Ym.t(11.5, color: Ym.grey)),
                         ],
                       ),
-              ),
-              const SizedBox(height: 24),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Container(
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: const Color(0xFFE8EAF0), width: 0.5),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 44, height: 44,
-                        decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(12)),
-                        child: const Icon(Icons.insights_rounded, color: Color(0xFFD97706), size: 22),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(colors: [Ym.amber, Ym.amberDark]),
+                        borderRadius: BorderRadius.circular(14),
                       ),
-                      const SizedBox(width: 14),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Bus Insights & Health', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF0F1B4C))),
-                            SizedBox(height: 2),
-                            Text('Live tracking, performance & health updates', style: TextStyle(fontSize: 11, color: Color(0xFF8892AA))),
-                          ],
-                        ),
-                      ),
-                      ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFFFEDD5),
-                          foregroundColor: const Color(0xFFD97706),
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        ),
-                        onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Bus Insights & Health — Coming Soon')),
-                          );
-                        },
-                        child: const Text('View Dashboard →', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
-                      ),
-                    ],
-                  ),
+                      child: Text('Open', style: Ym.t(12, w: FontWeight.w800)),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 20),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 20),
-                child: Text('System Status', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Color(0xFF0F1B4C))),
-              ),
-              const SizedBox(height: 16),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: const Color(0xFFE8EAF0), width: 0.5),
-                  ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      _SystemStatusItem(icon: Icons.storage_rounded, label: 'Database', status: 'Connected'),
-                      _SystemStatusItem(icon: Icons.location_on_rounded, label: 'GPS Service', status: 'Active'),
-                      _SystemStatusItem(icon: Icons.notifications_active_rounded, label: 'Notification', status: 'Running'),
-                    ],
-                  ),
+            ),
+            const SizedBox(height: 12),
+            YmFadeSlide(
+              index: 6,
+              child: YmCard(
+                onTap: () => _open(context, const AdminReportsScreen()),
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    const YmIconBadge(icon: Icons.bar_chart_rounded, size: 46),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Monthly Reports', style: Ym.h(14.5)),
+                          const SizedBox(height: 2),
+                          Text('Trips, days run and issues for every route',
+                              style: Ym.t(11.5, color: Ym.grey)),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(colors: [Ym.amber, Ym.amberDark]),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Text('Open', style: Ym.t(12, w: FontWeight.w800)),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 32),
-            ],
-          ),
+            ),
+            const SizedBox(height: 26),
+            const YmFadeSlide(index: 6, child: YmSectionTitle('System Status')),
+            YmFadeSlide(
+              index: 6,
+              child: YmCard(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _SystemStatusItem(icon: Icons.storage_rounded, label: 'Database', status: 'Connected'),
+                    _SystemStatusItem(icon: Icons.location_on_rounded, label: 'GPS Service', status: 'Active'),
+                    _SystemStatusItem(icon: Icons.notifications_active_rounded, label: 'Notification', status: 'Running'),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -3482,15 +4599,11 @@ class _SystemStatusItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Container(
-          width: 40, height: 40,
-          decoration: BoxDecoration(color: const Color(0xFFD1FAE5), shape: BoxShape.circle),
-          child: Icon(icon, color: const Color(0xFF059669), size: 18),
-        ),
+        YmIconBadge(icon: icon, color: Ym.green, size: 44),
         const SizedBox(height: 8),
-        Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF8892AA))),
+        Text(label, style: Ym.t(11, color: Ym.grey)),
         const SizedBox(height: 2),
-        Text(status, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF059669))),
+        Text(status, style: Ym.t(12, color: Ym.green, w: FontWeight.w800)),
       ],
     );
   }
@@ -3522,31 +4635,36 @@ class _StatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return YmCard(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE8EAF0), width: 0.5),
-      ),
+      radius: 24,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(width: 44, height: 44, decoration: BoxDecoration(color: iconBg, shape: BoxShape.circle), child: Icon(icon, color: iconColor, size: 22)),
-          const SizedBox(height: 12),
-          Text(title, style: const TextStyle(fontSize: 12, color: Color(0xFF8892AA), fontWeight: FontWeight.w500)),
-          const SizedBox(height: 4),
-          Text(value, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: Color(0xFF0F1B4C))),
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: iconBg,
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: Icon(icon, color: iconColor, size: 22),
+          ),
+          const Spacer(),
+          Text(title, style: Ym.t(12, color: Ym.grey, w: FontWeight.w600)),
+          const SizedBox(height: 2),
+          Text(value, style: Ym.h(28)),
           const SizedBox(height: 8),
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Flexible(child: Text(subtitle, style: const TextStyle(fontSize: 11, color: Color(0xFF8892AA)), overflow: TextOverflow.ellipsis)),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(color: badgeColor.withOpacity(0.1), borderRadius: BorderRadius.circular(6)),
-                child: Text(badge, style: TextStyle(fontSize: 10, color: badgeColor, fontWeight: FontWeight.w700)),
+              Expanded(
+                child: Text(subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Ym.t(11, color: Ym.grey)),
               ),
+              const SizedBox(width: 6),
+              YmChip(badge, color: badgeColor),
             ],
           ),
         ],
@@ -3571,50 +4689,232 @@ class _BusDetailsTab extends StatelessWidget {
     required this.onEditRoute,
   });
 
+  bool _hasLocation(dynamic stop) => stop['lat'] != null && stop['lng'] != null;
+
   @override
   Widget build(BuildContext context) {
+    var totalStops = 0;
+    var missing = 0;
+    for (final r in liveRoutes) {
+      final stops = (r['stops'] as List?) ?? [];
+      totalStops += stops.length;
+      missing += stops.where((s) => !_hasLocation(s)).length;
+    }
+
     return SafeArea(
-      child: RefreshIndicator(
-        onRefresh: onRefresh,
-        child: isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : liveRoutes.isEmpty
-                ? ListView(children: const [SizedBox(height: 120), Center(child: Text('No routes defined yet.'))])
-                : ListView.builder(
-                    padding: const EdgeInsets.all(20),
-                    itemCount: liveRoutes.length,
-                    itemBuilder: (context, index) {
-                      final route = liveRoutes[index];
-                      final stops = route['stops'] as List? ?? [];
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        child: ExpansionTile(
-                          title: Text(route['route_name'] ?? 'Unnamed Route', style: const TextStyle(fontWeight: FontWeight.bold)),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.edit_outlined, color: Color(0xFF3B5BFF), size: 20),
-                            onPressed: () => onEditRoute(route),
-                          ),
-                          children: stops.map<Widget>((stop) {
-                            String timeDisplay = '';
-                            if (stop['timing'] != null) {
-                              final rawTime = stop['timing'].toString();
-                              timeDisplay = rawTime.length >= 5 ? rawTime.substring(0, 5) : rawTime;
-                            }
-                            final hasLocation = stop['lat'] != null && stop['lng'] != null;
-                            return ListTile(
-                              leading: Icon(
-                                Icons.location_on_rounded,
-                                color: hasLocation ? Colors.green : Colors.blueAccent,
+      child: Column(
+        children: [
+          _AdminHeader(
+            title: 'Bus Details',
+            subtitle: 'Routes, stops and map locations',
+            icon: Icons.directions_bus_rounded,
+            color: const Color(0xFF2563EB),
+          ),
+          if (!isLoading && liveRoutes.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+              child: Row(
+                children: [
+                  _MiniStat(
+                      value: '${liveRoutes.length}',
+                      label: 'Routes',
+                      icon: Icons.route_rounded,
+                      color: const Color(0xFF7C3AED)),
+                  const SizedBox(width: 10),
+                  _MiniStat(
+                      value: '$totalStops',
+                      label: 'Stops',
+                      icon: Icons.location_on_outlined,
+                      color: const Color(0xFF2563EB)),
+                  const SizedBox(width: 10),
+                  _MiniStat(
+                      value: '$missing',
+                      label: 'No location',
+                      icon: missing == 0
+                          ? Icons.check_circle_outline_rounded
+                          : Icons.wrong_location_outlined,
+                      color: missing == 0 ? const Color(0xFF16A34A) : Colors.redAccent),
+                ],
+              ),
+            ),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: onRefresh,
+              child: isLoading
+                  ? const YmSkeletonList(count: 4, height: 84)
+                  : liveRoutes.isEmpty
+                      ? ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          children: const [
+                            SizedBox(height: 80),
+                            _AdminEmpty(
+                              icon: Icons.route_rounded,
+                              title: 'No routes defined yet',
+                              subtitle: 'Upload a CSV from Home to add routes and stops.',
+                            ),
+                          ],
+                        )
+                      : ListView.builder(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+                          itemCount: liveRoutes.length,
+                          itemBuilder: (context, index) {
+                            final route = liveRoutes[index];
+                            final stops = List<Map<String, dynamic>>.from(
+                                (route['stops'] as List?) ?? []);
+                            stops.sort((a, b) => (a['timing'] ?? '')
+                                .toString()
+                                .compareTo((b['timing'] ?? '').toString()));
+                            final located = stops.where(_hasLocation).length;
+                            final allLocated = stops.isNotEmpty && located == stops.length;
+
+                            return YmFadeSlide(
+                              index: index,
+                              child: Container(
+                                margin: const EdgeInsets.only(bottom: 12),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(22),
+                                  boxShadow: _adminShadow,
+                                ),
+                                child: Theme(
+                                  data: Theme.of(context)
+                                      .copyWith(dividerColor: Colors.transparent),
+                                  child: ExpansionTile(
+                                    tilePadding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
+                                    childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                                    iconColor: const Color(0xFF8892AA),
+                                    leading: Container(
+                                      width: 46,
+                                      height: 46,
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                          colors: [
+                                            const Color(0xFF2563EB).withOpacity(0.2),
+                                            const Color(0xFF2563EB).withOpacity(0.07),
+                                          ],
+                                        ),
+                                        borderRadius: BorderRadius.circular(15),
+                                      ),
+                                      child: const Icon(Icons.directions_bus_rounded,
+                                          color: Color(0xFF2563EB), size: 22),
+                                    ),
+                                    title: Text(route['route_name'] ?? 'Unnamed Route',
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 15,
+                                            color: Color(0xFF0F1B4C))),
+                                    subtitle: Padding(
+                                      padding: const EdgeInsets.only(top: 6),
+                                      child: Wrap(
+                                        spacing: 6,
+                                        runSpacing: 4,
+                                        children: [
+                                          _InfoChip('${stops.length} stops',
+                                              icon: Icons.pin_drop_outlined,
+                                              color: const Color(0xFF2563EB)),
+                                          _InfoChip(
+                                              allLocated
+                                                  ? 'All located'
+                                                  : '$located/${stops.length} located',
+                                              icon: allLocated
+                                                  ? Icons.check_circle_rounded
+                                                  : Icons.wrong_location_outlined,
+                                              color: allLocated
+                                                  ? const Color(0xFF16A34A)
+                                                  : const Color(0xFFD97706)),
+                                        ],
+                                      ),
+                                    ),
+                                    trailing: IconButton(
+                                      icon: const Icon(Icons.edit_outlined,
+                                          color: Color(0xFF3B5BFF), size: 20),
+                                      onPressed: () => onEditRoute(route),
+                                    ),
+                                    children: [
+                                      for (var i = 0; i < stops.length; i++)
+                                        _stopRow(i, stops[i], i == stops.length - 1),
+                                      if (stops.isEmpty)
+                                        const Padding(
+                                          padding: EdgeInsets.only(top: 4),
+                                          child: Text('No stops on this route yet.',
+                                              style: TextStyle(
+                                                  fontSize: 12.5, color: Color(0xFF8892AA))),
+                                        ),
+                                    ],
+                                  ),
+                                ),
                               ),
-                              title: Text(stop['stop_name'] ?? ''),
-                              trailing: Text(timeDisplay, style: const TextStyle(fontFamily: 'monospace')),
                             );
-                          }).toList(),
+                          },
                         ),
-                      );
-                    },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _stopRow(int i, Map<String, dynamic> stop, bool last) {
+    final raw = (stop['timing'] ?? '').toString();
+    final time = raw.length >= 5 ? raw.substring(0, 5) : raw;
+    final has = _hasLocation(stop);
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: 28,
+            child: Column(
+              children: [
+                Container(
+                  width: 22,
+                  height: 22,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: has ? const Color(0xFF16A34A) : const Color(0xFFD97706),
+                    shape: BoxShape.circle,
                   ),
+                  child: Text('${i + 1}',
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.w800)),
+                ),
+                if (!last)
+                  Expanded(
+                    child: Container(
+                      width: 2,
+                      margin: const EdgeInsets.symmetric(vertical: 2),
+                      color: const Color(0xFFF0E2C8),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text((stop['stop_name'] ?? '').toString(),
+                        style: const TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF0F1B4C))),
+                  ),
+                  if (time.isNotEmpty) _InfoChip(time, icon: Icons.access_time_rounded),
+                  const SizedBox(width: 6),
+                  Icon(has ? Icons.location_on_rounded : Icons.location_off_outlined,
+                      size: 18,
+                      color: has ? const Color(0xFF16A34A) : const Color(0xFFB0B7C9)),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -3631,4 +4931,323 @@ class _PlaceholderTab extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(child: Text('$title — Coming Soon'));
   }
+}
+
+// ══════════════════════════════════════════════
+// SHARED LOOK (admin pages): same cream + navy + blue theme, just tidier
+// ══════════════════════════════════════════════
+const List<BoxShadow> _adminShadow = [
+  BoxShadow(color: Color(0x120F1B4C), blurRadius: 18, offset: Offset(0, 6)),
+];
+
+class _AdminHeader extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+  final Widget? trailing;
+  final VoidCallback? onBack;
+
+  const _AdminHeader({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    this.color = Ym.amberDark,
+    this.trailing,
+    this.onBack,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(onBack == null ? 20 : 8, 16, 20, 10),
+      child: Row(
+        children: [
+          if (onBack != null)
+            IconButton(
+              icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                  size: 18, color: Color(0xFF0F1B4C)),
+              onPressed: onBack,
+            ),
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [color.withOpacity(0.2), color.withOpacity(0.08)],
+              ),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(icon, color: color, size: 24),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF0F1B4C))),
+                const SizedBox(height: 2),
+                Text(subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12.5, color: Color(0xFF8892AA))),
+              ],
+            ),
+          ),
+          if (trailing != null) trailing!,
+        ],
+      ),
+    );
+  }
+}
+
+class _PillButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+  final Color color;
+
+  const _PillButton({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    this.color = Ym.amberDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return YmPressable(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(colors: [Ym.amber, color]),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+                color: color.withOpacity(0.3),
+                blurRadius: 14,
+                offset: const Offset(0, 6)),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: Ym.navy, size: 18),
+            const SizedBox(width: 6),
+            Text(label,
+                style: const TextStyle(
+                    color: Ym.navy, fontWeight: FontWeight.w800, fontSize: 13)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AdminEmpty extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+
+  const _AdminEmpty({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.color = Ym.amberDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 84,
+              height: 84,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [color.withOpacity(0.18), color.withOpacity(0.06)],
+                ),
+              ),
+              child: Icon(icon, color: color, size: 38),
+            ),
+            const SizedBox(height: 16),
+            Text(title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF0F1B4C))),
+            const SizedBox(height: 6),
+            Text(subtitle,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12.5, color: Color(0xFF8892AA), height: 1.4)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MiniStat extends StatelessWidget {
+  final String value;
+  final String label;
+  final IconData icon;
+  final Color color;
+
+  const _MiniStat({
+    required this.value,
+    required this.label,
+    required this.icon,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: _adminShadow,
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 20),
+            const SizedBox(height: 6),
+            Text(value,
+                style: const TextStyle(
+                    fontSize: 19, fontWeight: FontWeight.w800, color: Color(0xFF0F1B4C))),
+            Text(label,
+                style: const TextStyle(fontSize: 11, color: Color(0xFF8892AA))),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InfoChip extends StatelessWidget {
+  final String text;
+  final IconData? icon;
+  final Color color;
+
+  const _InfoChip(this.text, {this.icon, this.color = Ym.amberDark});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 12.5, color: color),
+            const SizedBox(width: 4),
+          ],
+          Text(text,
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color)),
+        ],
+      ),
+    );
+  }
+}
+
+class _IconRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final dynamic value;
+
+  const _IconRow({required this.icon, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    final display =
+        (value == null || value.toString().trim().isEmpty) ? '—' : value.toString();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: const Color(0xFF8892AA)),
+          const SizedBox(width: 10),
+          SizedBox(
+              width: 86,
+              child: Text(label,
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF8892AA)))),
+          Expanded(
+            child: Text(display,
+                style: const TextStyle(
+                    fontSize: 12.5,
+                    color: Color(0xFF0F1B4C),
+                    fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Avatar extends StatelessWidget {
+  final String name;
+  final Color color;
+  final double size;
+
+  const _Avatar({required this.name, required this.color, this.size = 44});
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase();
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [color, color.withOpacity(0.7)],
+        ),
+        borderRadius: BorderRadius.circular(size * 0.34),
+      ),
+      child: Text(initial,
+          style: TextStyle(
+              color: Colors.white, fontSize: size * 0.42, fontWeight: FontWeight.w800)),
+    );
+  }
+}
+
+/// What an upload would do, worked out BEFORE anything is changed, so the admin
+/// sees it first and the result matches exactly.
+class _ImportPlan {
+  final List<String> routesAdd = [];
+  final List<String> routesSkip = [];
+  final List<String> routesUpdate = [];
+  final List<String> routesRemove = [];
+  final List<String> routesKept = [];
+  int stopsAdd = 0;
+  int stopsUpdate = 0;
+  int stopsRemove = 0;
+  int stopsKept = 0;
 }

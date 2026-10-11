@@ -7,6 +7,9 @@ import 'screens/animated_splash_screen.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/helpdesk_management_screen.dart'; // MATCHED: Your exact file name
 import 'screens/student_dashboard_screen.dart';
+import 'screens/driver_dashboard_screen.dart';
+import 'screens/parent_dashboard_screen.dart';
+import 'screens/faculty_dashboard_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -44,15 +47,9 @@ class MyApp extends StatelessWidget {
         '/admin_dashboard': (context) => const AdminDashboardScreen(),
         '/helpdesk_dashboard': (context) => const HelpDeskDashboard(), // UPDATED: Points to your widget
         '/student_dashboard': (context) => const StudentDashboardScreen(),
-        '/parent_dashboard': (context) => const Scaffold(
-          body: Center(child: Text('Parent Dashboard Coming Soon!')),
-        ),
-        '/driver_dashboard': (context) => const Scaffold(
-          body: Center(child: Text('Driver Dashboard Coming Soon!')),
-        ),
-        '/faculty_dashboard': (context) => const Scaffold(
-          body: Center(child: Text('Faculty Dashboard Coming Soon!')),
-        ),
+        '/parent_dashboard': (context) => const ParentDashboardScreen(),
+        '/driver_dashboard': (context) => const DriverDashboardScreen(),
+        '/faculty_dashboard': (context) => const FacultyDashboardScreen(),
       },
     );
   }

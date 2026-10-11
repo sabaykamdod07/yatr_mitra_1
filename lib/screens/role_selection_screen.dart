@@ -1,174 +1,129 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+
+import '../theme/ym_ui.dart';
 import 'login_screen.dart';
 
+/// "Select your role to continue": a light cream page with six role cards.
+/// Each card has a soft coloured icon tile, an arrow chip, the role name and one
+/// line about it. Pressing or hovering a card outlines it in orange.
 class RoleSelectionScreen extends StatelessWidget {
   const RoleSelectionScreen({super.key});
 
-  final List<Map<String, dynamic>> roles = const [
-    {
-      "name": "Student",
-      "icon": Icons.school_rounded,
-      "desc": "Track your daily commute",
-      "color": Color(0xFF6C63FF),
-    },
-    {
-      "name": "Parent",
-      "icon": Icons.family_restroom_rounded,
-      "desc": "Monitor your child's safety",
-      "color": Color(0xFF00C9A7),
-    },
-    {
-      "name": "Driver",
-      "icon": Icons.directions_bus_rounded,
-      "desc": "Manage your active route",
-      "color": Color(0xFFFF6B6B),
-    },
-    {
-      "name": "Faculty",
-      "icon": Icons.badge_rounded,
-      "desc": "Transit schedule updates",
-      "color": Color(0xFFFFBE0B),
-    },
-    {
-      "name": "Helpdesk",
-      "icon": Icons.support_agent_rounded,
-      "desc": "Input data & support users",
-      "color": Color(0xFF4CC9F0),
-    },
-    {
-      "name": "Admin",
-      "icon": Icons.admin_panel_settings_rounded,
-      "desc": "Full infrastructure control",
-      "color": Color(0xFFFF9F1C),
-    },
+  static const _cream = Color(0xFFFBF6EA);
+  static const _navy = Color(0xFF14153A);
+  static const _grey = Color(0xFF5B6275);
+
+  // label shown, role passed to the login page, icon, description, tile colours
+  static const _roles = <(String, String, IconData, String, Color, Color)>[
+    ('Student', 'Student', Icons.school_rounded, 'Track your daily commute',
+        Color(0xFFE2AE4A), Color(0xFFC9922D)),
+    ('Parent', 'Parent', Icons.family_restroom_rounded,
+        "Monitor your child's safety", Color(0xFF8DAA8F), Color(0xFF6E8D71)),
+    ('Driver', 'Driver', Icons.directions_bus_rounded,
+        'Manage your active route', Color(0xFFD8734A), Color(0xFFBF5B33)),
+    ('Faculty', 'Faculty', Icons.apartment_rounded, 'Transit schedule updates',
+        Color(0xFF7C9BC6), Color(0xFF5F7FAE)),
+    ('Helpdesk', 'Help Desk', Icons.headset_mic_rounded,
+        'Input data & support users', Color(0xFF5FA8A6), Color(0xFF408886)),
+    ('Admin', 'Admin', Icons.admin_panel_settings_rounded,
+        'Full infrastructure control', Color(0xFFA596C6), Color(0xFF8576AA)),
   ];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0E21),
+      backgroundColor: _cream,
       body: Stack(
         children: [
-          // Static background image (replaces the old looping video).
-          // NOTE: the artwork has its own "Yatra Mitra" logo near the top,
-          // which would duplicate the header title below. We scale the
-          // image up and anchor the scale at the BOTTOM so the top of the
-          // frame (and that logo) gets pushed up and clipped away by
-          // ClipRect, leaving just the road/skyline illustration visible.
+          // the soft line drawing of the college and the bus (your role_bg.png).
+          // It is scaled up from the bottom so the small logo that is part of the
+          // picture is pushed off the top.
           Positioned.fill(
             child: ClipRect(
               child: Transform.scale(
-                scale: 1.45,
+                scale: 1.3,
                 alignment: Alignment.bottomCenter,
-                child: Image.asset(
-                  'assets/images/role_bg.png',
-                  fit: BoxFit.cover,
-                ),
+                child: Image.asset('assets/images/role_bg.png', fit: BoxFit.cover),
               ),
             ),
           ),
-
-          // Soft gradient overlay — keeps the header text and cards
-          // legible while still letting the illustration show through.
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withOpacity(0.55),
-                    Colors.black.withOpacity(0.25),
-                    Colors.black.withOpacity(0.20),
-                    Colors.black.withOpacity(0.45),
-                  ],
-                  stops: const [0.0, 0.25, 0.6, 1.0],
-                ),
-              ),
-            ),
-          ),
-
-          // Content
           SafeArea(
-            child: Column(
-              children: [
-                // Back button + title
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 20, vertical: 12),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(
-                            Icons.arrow_back_ios_new_rounded,
-                            color: Colors.white),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Yatra Mitra',
-                              style: GoogleFonts.plusJakartaSans(
-                                color: Colors.white,
-                                fontSize: 22,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 0.2,
-                                shadows: const [
-                                  Shadow(
-                                    color: Colors.black45,
-                                    blurRadius: 8,
-                                    offset: Offset(0, 2),
-                                  ),
-                                ],
-                              ),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 8, 20, 4),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                                color: _navy, size: 22),
+                            onPressed: () => Navigator.maybePop(context),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Yatra Mitra',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      color: _navy,
+                                      fontSize: 30,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: -0.4,
+                                    )),
+                                Text('Select your role to continue',
+                                    style: GoogleFonts.inter(
+                                      color: _grey,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w500,
+                                    )),
+                              ],
                             ),
-                            Text(
-                              'Select your role to continue',
-                              style: GoogleFonts.inter(
-                                color: Colors.white70,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                                letterSpacing: 0.1,
-                              ),
-                            ),
-                          ],
-                        ),
+                          ),
+                          // the Yatra Mitra logo
+                          Image.asset(
+                            'assets/images/yatra_logo.png',
+                            height: 58,
+                            filterQuality: FilterQuality.high,
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
-
-                // Role cards grid
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: GridView.builder(
-                      physics: const BouncingScrollPhysics(),
-                      gridDelegate:
-                          const SliverGridDelegateWithMaxCrossAxisExtent(
-                        maxCrossAxisExtent: 220,
-                        mainAxisSpacing: 16,
-                        crossAxisSpacing: 16,
-                        childAspectRatio: 1.0,
-                      ),
-                      itemCount: roles.length,
-                      itemBuilder: (context, index) {
-                        return _RoleCard(
-                          name: roles[index]["name"],
-                          icon: roles[index]["icon"],
-                          description: roles[index]["desc"],
-                          color: roles[index]["color"],
-                        );
-                      },
                     ),
-                  ),
+                    Expanded(
+                      child: GridView.builder(
+                        physics: const BouncingScrollPhysics(),
+                        padding: const EdgeInsets.fromLTRB(18, 16, 18, 24),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 14,
+                          crossAxisSpacing: 14,
+                          childAspectRatio: 1.0,
+                        ),
+                        itemCount: _roles.length,
+                        itemBuilder: (context, i) {
+                          final r = _roles[i];
+                          return YmFadeSlide(
+                            index: i,
+                            child: _RoleCard(
+                              label: r.$1,
+                              loginRole: r.$2,
+                              icon: r.$3,
+                              description: r.$4,
+                              colorA: r.$5,
+                              colorB: r.$6,
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 20),
-              ],
+              ),
             ),
           ),
         ],
@@ -178,120 +133,146 @@ class RoleSelectionScreen extends StatelessWidget {
 }
 
 class _RoleCard extends StatefulWidget {
-  final String name;
-  final IconData icon;
-  final String description;
-  final Color color;
-
   const _RoleCard({
-    required this.name,
+    required this.label,
+    required this.loginRole,
     required this.icon,
     required this.description,
-    required this.color,
+    required this.colorA,
+    required this.colorB,
   });
+
+  final String label;
+  final String loginRole;
+  final IconData icon;
+  final String description;
+  final Color colorA;
+  final Color colorB;
 
   @override
   State<_RoleCard> createState() => _RoleCardState();
 }
 
 class _RoleCardState extends State<_RoleCard> {
-  bool _isHovered = false;
+  bool _hover = false;
+  bool _down = false;
+
+  static const _orange = Color(0xFFD2692F);
+  static const _border = Color(0xFFE6D9BD);
+  static const _navy = Color(0xFF14153A);
+  static const _grey = Color(0xFF5B6275);
 
   @override
   Widget build(BuildContext context) {
+    final active = _hover || _down;
+
     return MouseRegion(
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-        transform: _isHovered
-            ? (Matrix4.identity()..translate(0, -4, 0))
-            : Matrix4.identity(),
-        child: GestureDetector(
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => LoginScreen(selectedRole: widget.name),
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) => setState(() => _down = true),
+        onTapCancel: () => setState(() => _down = false),
+        onTapUp: (_) => setState(() => _down = false),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => LoginScreen(selectedRole: widget.loginRole),
+          ),
+        ),
+        child: AnimatedScale(
+          scale: _down ? 0.97 : 1,
+          duration: const Duration(milliseconds: 120),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFFBF3).withOpacity(0.94),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: active ? _orange : _border,
+                width: active ? 1.8 : 1.2,
               ),
-            );
-          },
-          child: ClipRRect(
-            // Frosted-glass card: a subtle blur behind a semi-transparent
-            // white fill reads clearly against the lighter background,
-            // instead of the low-opacity flat fill that used to blend
-            // into the dark overlay.
-            borderRadius: BorderRadius.circular(20),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: _isHovered
-                      ? widget.color.withOpacity(0.30)
-                      : Colors.white.withOpacity(0.16),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: _isHovered
-                        ? widget.color
-                        : Colors.white.withOpacity(0.30),
-                    width: 1.5,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: _isHovered
-                          ? widget.color.withOpacity(0.35)
-                          : Colors.black.withOpacity(0.18),
-                      blurRadius: _isHovered ? 18 : 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
+              boxShadow: [
+                BoxShadow(
+                  color: active
+                      ? _orange.withOpacity(0.18)
+                      : const Color(0xFF8A6A2F).withOpacity(0.07),
+                  blurRadius: active ? 20 : 12,
+                  offset: const Offset(0, 6),
                 ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(12),
+                      width: 50,
+                      height: 50,
                       decoration: BoxDecoration(
-                        color: widget.color.withOpacity(0.28),
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [widget.colorA, widget.colorB],
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: widget.colorB.withOpacity(0.28),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Icon(widget.icon, color: Colors.white, size: 27),
+                    ),
+                    const Spacer(),
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
                         shape: BoxShape.circle,
+                        color: active ? _orange : const Color(0xFFEFE6D6),
                       ),
                       child: Icon(
-                        widget.icon,
-                        color: _isHovered ? widget.color : Colors.white,
-                        size: 28,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      widget.name,
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 15.5,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.1,
-                        color: _isHovered ? widget.color : Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      widget.description,
-                      textAlign: TextAlign.center,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.inter(
-                        fontSize: 10.5,
-                        color: _isHovered
-                            ? Colors.white.withOpacity(0.9)
-                            : Colors.white.withOpacity(0.75),
-                        fontWeight: FontWeight.w500,
-                        height: 1.35,
-                        letterSpacing: 0.05,
+                        Icons.arrow_forward_rounded,
+                        size: 18,
+                        color: active ? Colors.white : _navy,
                       ),
                     ),
                   ],
                 ),
-              ),
+                const Spacer(),
+                Text(
+                  widget.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800,
+                    color: _navy,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  widget.description,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.inter(
+                    fontSize: 12.5,
+                    height: 1.3,
+                    fontWeight: FontWeight.w500,
+                    color: _grey,
+                  ),
+                ),
+              ],
             ),
           ),
         ),

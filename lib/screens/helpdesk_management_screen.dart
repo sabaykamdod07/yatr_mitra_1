@@ -1,8 +1,14 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:iconsax/iconsax.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'role_selection_screen.dart';
+import 'record_payment_sheet.dart';
+import 'payment_requests_screen.dart';
+import '../widgets/account_sheet.dart';
+import '../widgets/link_rfid_sheet.dart';
+import '../theme/ym_ui.dart';
 
 class HelpDeskDashboard extends StatefulWidget {
   const HelpDeskDashboard({super.key});
@@ -42,10 +48,16 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
 
   // ===== NEW: Pending Registrations State =====
   List<Map<String, dynamic>> _pendingRegistrations = [];
+  int _paymentRequestCount = 0; // payments sent by parents, waiting to be checked
   RealtimeChannel? _pendingRegChannel;
   String? _reviewingRegistrationId;
   bool? _reviewingWantsCustomStop;
   String? _reviewingCustomStopNote;
+  // a payment sent with the registration form (the help desk verifies it)
+  double? _reviewingPaymentAmount;
+  String? _reviewingPaymentRef;
+  String? _reviewingPaymentMethod; // UPI or Cash
+  String? _reviewingRegCode;
   double? _reviewingCustomStopLat;
   double? _reviewingCustomStopLng;
   String _reviewingRole = 'student';
@@ -82,7 +94,7 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
         title: const Text(
           'Student Registration Link',
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF0F1B4C)),
@@ -126,8 +138,10 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
           ),
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF3B5BFF),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              backgroundColor: Ym.amber,
+              foregroundColor: Ym.navy,
+              elevation: 0,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             ),
             onPressed: () {
               // Copy to clipboard
@@ -142,7 +156,7 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
               Navigator.pop(context);
             },
             icon: const Icon(Icons.copy, size: 16),
-            label: const Text('Copy Link', style: TextStyle(color: Colors.white)),
+            label: const Text('Copy Link', style: TextStyle(color: Ym.navy, fontWeight: FontWeight.w800)),
           ),
         ],
       ),
@@ -263,19 +277,19 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(30))),
       builder: (context) {
         return SizedBox(
           height: MediaQuery.of(context).size.height * 0.75,
           child: Column(
             children: [
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text('Announcements', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              ),
+              _sheetHeader('Announcements', Icons.campaign_rounded),
               Expanded(
                 child: _announcements.isEmpty
-                    ? const Center(child: Text('No announcements.'))
+                    ? const YmEmpty(
+                        icon: Icons.campaign_outlined,
+                        title: 'No announcements',
+                        subtitle: 'Announcements from the admin appear here.')
                     : ListView.builder(
                         itemCount: _announcements.length,
                         itemBuilder: (context, index) {
@@ -287,12 +301,12 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                               : createdAtRaw;
 
                           return Container(
-                            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            padding: const EdgeInsets.all(14),
+                            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 7),
+                            padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
                               color: Colors.white,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: const Color(0xFFE5E7EB)),
+                              borderRadius: BorderRadius.circular(22),
+                              boxShadow: Ym.shadow(),
                             ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -303,8 +317,8 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                                     Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                       decoration: BoxDecoration(
-                                        color: const Color(0xFF3B5BFF).withOpacity(0.1),
-                                        borderRadius: BorderRadius.circular(6),
+                                        color: Ym.amber.withOpacity(0.2),
+                                        borderRadius: BorderRadius.circular(20),
                                       ),
                                       child: Row(
                                         mainAxisSize: MainAxisSize.min,
@@ -314,7 +328,7 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                                                 ? Icons.support_agent_rounded
                                                 : Icons.campaign_rounded,
                                             size: 12,
-                                            color: const Color(0xFF3B5BFF),
+                                            color: Ym.amberDark,
                                           ),
                                           const SizedBox(width: 4),
                                           Text(
@@ -322,7 +336,7 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                                             style: const TextStyle(
                                               fontSize: 10,
                                               fontWeight: FontWeight.w700,
-                                              color: Color(0xFF3B5BFF),
+                                              color: Ym.amberDark,
                                             ),
                                           ),
                                         ],
@@ -370,7 +384,7 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(30))),
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
@@ -378,35 +392,66 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
               height: MediaQuery.of(context).size.height * 0.75,
               child: Column(
                 children: [
-                  const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Text('Pending Registrations', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  ),
+                  _sheetHeader('Pending Registrations', Icons.how_to_reg_rounded),
                   Expanded(
                     child: _pendingRegistrations.isEmpty
-                        ? const Center(child: Text('No pending registrations.'))
+                        ? const YmEmpty(
+                            icon: Icons.how_to_reg_outlined,
+                            title: 'No pending registrations',
+                            subtitle: 'New registrations from the form appear here.')
                         : ListView.builder(
                             itemCount: _pendingRegistrations.length,
                             itemBuilder: (context, index) {
                               final reg = _pendingRegistrations[index];
                               final regRole = (reg['role'] ?? 'student').toString();
-                              return ListTile(
-                                leading: Icon(
-                                  regRole == 'faculty' ? Icons.badge_outlined : Icons.school_outlined,
-                                  color: const Color(0xFF3B5BFF),
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                                child: YmCard(
+                                  padding: const EdgeInsets.all(14),
+                                  radius: 20,
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    _openFormModal(null, reg);
+                                  },
+                                  child: Row(
+                                    children: [
+                                      YmIconBadge(
+                                        icon: regRole == 'faculty'
+                                            ? Icons.badge_outlined
+                                            : Icons.school_outlined,
+                                        size: 44,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(reg['student_name'] ?? '', style: Ym.h(14.5)),
+                                            const SizedBox(height: 3),
+                                            Text(
+                                              '${regRole == 'faculty' ? 'Faculty' : 'Student'} • ${reg['department'] ?? '—'}',
+                                              style: Ym.t(12, color: Ym.grey),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      if ((reg['payment_method'] ?? '').toString().toLowerCase() == 'cash') ...[
+                                        const YmChip('Will pay cash',
+                                            color: Ym.amberDark, icon: Icons.payments_outlined),
+                                        const SizedBox(width: 6),
+                                      ] else if ((reg['payment_reference'] ?? '').toString().isNotEmpty) ...[
+                                        const YmChip('Payment sent',
+                                            color: Ym.green, icon: Icons.payments_rounded),
+                                        const SizedBox(width: 6),
+                                      ],
+                                      reg['wants_custom_stop'] == true
+                                          ? const YmChip('Custom stop',
+                                              color: Ym.amberDark,
+                                              icon: Icons.location_off_outlined)
+                                          : const Icon(Icons.chevron_right_rounded, color: Ym.grey),
+                                    ],
+                                  ),
                                 ),
-                                title: Text(reg['student_name'] ?? ''),
-                                subtitle: Text(
-                                  '${regRole == 'faculty' ? 'Faculty' : 'Student'} • ${reg['department'] ?? '—'}',
-                                  style: const TextStyle(fontSize: 12),
-                                ),
-                                trailing: reg['wants_custom_stop'] == true
-                                    ? const Icon(Icons.location_off_outlined, color: Colors.amber, size: 18)
-                                    : const Icon(Icons.chevron_right, size: 18),
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  _openFormModal(null, reg);
-                                },
                               );
                             },
                           ),
@@ -418,6 +463,23 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
         );
       },
     );
+  }
+
+  /// how many payments parents have sent that still need checking
+  Future<void> _fetchPaymentRequestCount() async {
+    try {
+      final n = await _supabase.rpc('pending_payment_request_count');
+      if (mounted) setState(() => _paymentRequestCount = (n as num?)?.toInt() ?? 0);
+    } catch (_) {
+      // the button still works; it just shows no number
+    }
+  }
+
+  Future<void> _openPaymentRequests() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const PaymentRequestsScreen()),
+    );
+    if (mounted) _fetchPaymentRequestCount();
   }
 
   Future<void> _loadDashboardData() async {
@@ -438,6 +500,7 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
         await _fetchNotifications();
         await _fetchPendingRegistrations(); // ← NEW
         await _fetchAnnouncements(); // ← NEW
+        await _fetchPaymentRequestCount();
         _subscribeToAnnouncements(); // ← NEW
 
         final studentData = await _supabase
@@ -505,34 +568,58 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
     _markAllNotificationsRead();
     showModalBottomSheet(
       context: context,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(30))),
       builder: (context) {
         return SizedBox(
-          height: 400,
+          height: 460,
           child: Column(
             children: [
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text('Notifications', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              ),
+              _sheetHeader('Notifications', Icons.notifications_active_outlined),
               Expanded(
                 child: _notifications.isEmpty
-                    ? const Center(child: Text('No notifications yet.'))
+                    ? const YmEmpty(
+                        icon: Icons.notifications_none_rounded,
+                        title: 'No notifications yet',
+                        subtitle: 'Updates about your requests appear here.')
                     : ListView.builder(
                         itemCount: _notifications.length,
                         itemBuilder: (context, index) {
                           final n = _notifications[index];
-                          return ListTile(
-                            leading: Icon(
-                              n['title'].toString().toLowerCase().contains('approved')
-                                  ? Icons.check_circle
-                                  : Icons.cancel,
-                              color: n['title'].toString().toLowerCase().contains('approved')
-                                  ? Colors.green
-                                  : Colors.redAccent,
+                          final approved =
+                              n['title'].toString().toLowerCase().contains('approved');
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                            child: Container(
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: Ym.shadow(),
+                                border: Border(
+                                    left: BorderSide(
+                                        color: approved ? Ym.green : Ym.red, width: 5)),
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Icon(approved ? Icons.check_circle : Icons.cancel,
+                                      color: approved ? Ym.green : Ym.red, size: 22),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(n['title'] ?? '', style: Ym.h(14)),
+                                        const SizedBox(height: 3),
+                                        Text(n['message'] ?? '',
+                                            style: Ym.t(12.5, color: Ym.grey)),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                            title: Text(n['title'] ?? ''),
-                            subtitle: Text(n['message'] ?? ''),
                           );
                         },
                       ),
@@ -619,6 +706,11 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
     }
   }
 
+  /// the registration came with a UPI payment (with a reference) or a promise to pay cash
+  bool get _hasRegPayment =>
+      _reviewingPaymentAmount != null &&
+      (_reviewingPaymentRef != null || (_reviewingPaymentMethod ?? '').toLowerCase() == 'cash');
+
   void _openFormModal([Map<String, dynamic>? student, Map<String, dynamic>? prefillFromRegistration]) {
     _editingStudent = student;
     _reviewingRegistrationId = prefillFromRegistration?['id'];
@@ -631,6 +723,18 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
         ? double.tryParse(prefillFromRegistration!['custom_stop_lng'].toString())
         : null;
     _reviewingRole = prefillFromRegistration?['role'] ?? 'student';
+    _reviewingPaymentAmount = prefillFromRegistration?['payment_amount'] != null
+        ? double.tryParse(prefillFromRegistration!['payment_amount'].toString())
+        : null;
+    _reviewingPaymentRef = (prefillFromRegistration?['payment_reference'] ?? '').toString().trim().isEmpty
+        ? null
+        : prefillFromRegistration!['payment_reference'].toString().trim();
+    _reviewingPaymentMethod = (prefillFromRegistration?['payment_method'] ?? '').toString().trim().isEmpty
+        ? null
+        : prefillFromRegistration!['payment_method'].toString().trim();
+    _reviewingRegCode = (prefillFromRegistration?['registration_code'] ?? '').toString().trim().isEmpty
+        ? null
+        : prefillFromRegistration!['registration_code'].toString().trim();
     final reg = prefillFromRegistration;
     String rawFee = student?['fee_status'] ?? 'unpaid';
     String rawRelation = student?['parent_relation'] ?? reg?['parent_relation'] ?? 'father';
@@ -675,7 +779,7 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
             });
 
             return AlertDialog(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
               title: Text(
                 _reviewingRole == 'faculty'
                     ? (_editingStudent != null ? 'Edit Faculty' : 'New Faculty')
@@ -690,6 +794,53 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        if (_reviewingRegistrationId != null && _reviewingRegCode != null)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Text('Registration number: $_reviewingRegCode',
+                                style: Ym.t(12.5, color: Ym.grey, w: FontWeight.w700)),
+                          ),
+                        if (_reviewingRegistrationId != null && _hasRegPayment)
+                          Container(
+                            width: double.infinity,
+                            margin: const EdgeInsets.only(bottom: 14),
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: Ym.amber.withOpacity(0.16),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: Ym.amber.withOpacity(0.6)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(children: [
+                                  const Icon(Icons.payments_rounded, color: Ym.amberDark, size: 20),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                      (_reviewingPaymentMethod ?? '').toLowerCase() == 'cash'
+                                          ? 'Will pay cash at the help desk'
+                                          : 'Payment sent with this registration',
+                                      style: Ym.h(13.5)),
+                                ]),
+                                const SizedBox(height: 8),
+                                Text(
+                                  (_reviewingPaymentMethod ?? '').toLowerCase() == 'cash'
+                                      ? '\u20B9${(_reviewingPaymentAmount ?? 0).round()}   \u2022   Cash'
+                                      : '\u20B9${(_reviewingPaymentAmount ?? 0).round()}   \u2022   Ref $_reviewingPaymentRef',
+                                  style: Ym.h(16),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  (_reviewingPaymentMethod ?? '').toLowerCase() == 'cash'
+                                      ? 'When you save this student, a CASH request goes to Payment requests. '
+                                          'Approve it there when the cash is handed over.'
+                                      : 'When you save this student, the payment goes to Payment requests. '
+                                          'Check it against the UPI / bank statement there, then approve it.',
+                                  style: Ym.t(12, color: Ym.grey).copyWith(height: 1.45),
+                                ),
+                              ],
+                            ),
+                          ),
                         _sectionHeader('Core Info'),
                         if (_reviewingRole != 'faculty')
                           Padding(
@@ -798,15 +949,15 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                                 const SizedBox(height: 8),
                                 ElevatedButton.icon(
                                   onPressed: () => _submitRouteRequest(_boardingPoint, _editingStudent?['id']),
-                                  icon: const Icon(Icons.send_rounded, size: 12, color: Colors.white),
+                                  icon: const Icon(Icons.send_rounded, size: 12, color: Ym.navy),
                                   label: const Text(
                                     'Request Stop Mapping Approval',
-                                    style: TextStyle(fontSize: 11, color: Colors.white),
+                                    style: TextStyle(fontSize: 11, color: Ym.navy, fontWeight: FontWeight.w800),
                                   ),
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF3B5BFF),
+                                    backgroundColor: Ym.amber,
                                     elevation: 0,
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                                     minimumSize: const Size(double.infinity, 36),
                                   ),
                                 ),
@@ -814,8 +965,13 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                             ),
                           ),
                         if (_reviewingRole != 'faculty')
-                          _buildDropdownField('Fee Status', _feeStatus, ['Unpaid', 'Partial', 'Paid'],
-                              (val) => setModalState(() => _feeStatus = val!)),
+                          const Padding(
+                            padding: EdgeInsets.only(top: 6),
+                            child: Text(
+                              'Fee status is automatic. Use the payment button on the student card to record a payment.',
+                              style: TextStyle(fontSize: 12, color: Colors.grey),
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -828,8 +984,11 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF3B5BFF),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    backgroundColor: Ym.amber,
+                    foregroundColor: Ym.navy,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                   ),
                   onPressed: () async {
                     if (_formKey.currentState!.validate()) {
@@ -845,6 +1004,9 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                             'faculty_phone': _studentPhone,
                             'department': _studentDepartment,
                             'boarding_point': _boardingPoint.isEmpty ? null : _boardingPoint,
+                            // the stop and route chosen in the registration (as for students)
+                            'route_id': reg?['suggested_route_id'] ?? _editingStudent?['route_id'],
+                            'stop_id': reg?['suggested_stop_id'] ?? _editingStudent?['stop_id'],
                           };
                           if (_editingStudent != null) {
                             await _supabase.from('faculty').update(facultyPayload).eq('id', _editingStudent!['id']);
@@ -868,7 +1030,6 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                             'parent_email': _parentEmail.trim(),
                             'parent_phone': _parentPhone,
                             'boarding_point': _boardingPoint.isEmpty ? null : _boardingPoint,
-                            'fee_status': _feeStatus.toLowerCase(),
                             'route_id': reg?['suggested_route_id'] ?? _editingStudent?['route_id'],
                             'stop_id': reg?['suggested_stop_id'] ?? _editingStudent?['stop_id'],
                           };
@@ -876,8 +1037,33 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                             await _supabase.from('students').update(payload).eq('id', _editingStudent!['id']);
                             _showSnack('Profile updated successfully', isError: false);
                           } else {
-                            await _supabase.from('students').insert([payload]);
+                            final created =
+                                await _supabase.from('students').insert([payload]).select('id').single();
                             _showSnack('Profile created successfully', isError: false);
+
+                            // a payment sent with the registration goes to Payment requests,
+                            // to be verified and approved like any other payment
+                            if (_hasRegPayment) {
+                              try {
+                                await _supabase.rpc('queue_registration_payment', params: {
+                                  'p_student': created['id'],
+                                  'p_amount': _reviewingPaymentAmount,
+                                  'p_reference': _reviewingPaymentRef,
+                                  'p_method': (_reviewingPaymentMethod ?? '').toLowerCase() == 'cash'
+                                      ? 'Cash'
+                                      : 'UPI',
+                                });
+                                _showSnack(
+                                    (_reviewingPaymentMethod ?? '').toLowerCase() == 'cash'
+                                        ? 'The cash payment is waiting in Payment requests. Approve it when the cash arrives.'
+                                        : 'The payment sent with the registration is waiting in Payment requests.',
+                                    isError: false);
+                              } on PostgrestException catch (e) {
+                                _showSnack('Student saved, but the payment was not queued: ${e.message}');
+                              } catch (e) {
+                                _showSnack('Student saved, but the payment was not queued: $e');
+                              }
+                            }
                           }
                         }
 
@@ -898,6 +1084,10 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                           _reviewingCustomStopLat = null;
                           _reviewingCustomStopLng = null;
                           _reviewingRole = 'student';
+                          _reviewingPaymentAmount = null;
+                          _reviewingPaymentRef = null;
+                          _reviewingPaymentMethod = null;
+                          _reviewingRegCode = null;
                         }
 
                         if (context.mounted) Navigator.pop(context);
@@ -907,7 +1097,7 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
                       }
                     }
                   },
-                  child: const Text('Save Changes', style: TextStyle(color: Colors.white)),
+                  child: const Text('Save Changes', style: TextStyle(color: Ym.navy, fontWeight: FontWeight.w800)),
                 ),
               ],
             );
@@ -958,7 +1148,7 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
       padding: const EdgeInsets.symmetric(vertical: 6.0),
       child: Text(
         label.toUpperCase(),
-        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF3B5BFF), letterSpacing: 0.5),
+        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Ym.amberDark, letterSpacing: 0.6),
       ),
     );
   }
@@ -971,9 +1161,17 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
         keyboardType: isEmail ? TextInputType.emailAddress : TextInputType.text,
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: const TextStyle(fontSize: 12, color: Color(0xFF6B7A99)),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          labelStyle: const TextStyle(fontSize: 12, color: Ym.grey),
+          filled: true,
+          fillColor: const Color(0xFFF8F9FB),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+          enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+          focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: Ym.amber, width: 1.6)),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         ),
         validator: (v) {
           if (required && (v == null || v.trim().isEmpty)) return 'Cannot be empty';
@@ -995,9 +1193,17 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
         value: value,
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: const TextStyle(fontSize: 12, color: Color(0xFF6B7A99)),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+          labelStyle: const TextStyle(fontSize: 12, color: Ym.grey),
+          filled: true,
+          fillColor: const Color(0xFFF8F9FB),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+          enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+          focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: Ym.amber, width: 1.6)),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
         ),
         items: items.map((i) => DropdownMenuItem(value: i, child: Text(i, style: const TextStyle(fontSize: 13)))).toList(),
         onChanged: onChanged,
@@ -1017,6 +1223,414 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
     if (s == 'paid') return const Color(0xFF166534);
     if (s == 'partial') return const Color(0xFF854D0E);
     return const Color(0xFF991B1B);
+  }
+
+  // ───────────────────────── UI (Yatra Mitra theme) ─────────────────────────
+
+  /// Handle + title used at the top of every pop-up sheet.
+  Widget _sheetHeader(String title, IconData icon) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+        child: Column(
+          children: [
+            Container(
+              width: 42,
+              height: 4.5,
+              decoration: BoxDecoration(
+                  color: Ym.line, borderRadius: BorderRadius.circular(4)),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                YmIconBadge(icon: icon, size: 42),
+                const SizedBox(width: 12),
+                Text(title, style: Ym.h(20)),
+              ],
+            ),
+          ],
+        ),
+      );
+
+  Widget _hdCount(int n, Color c) => Container(
+        constraints: const BoxConstraints(minWidth: 18),
+        height: 18,
+        padding: const EdgeInsets.symmetric(horizontal: 5),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(9)),
+        child: Text(n > 99 ? '99+' : '$n',
+            style: Ym.t(10, color: Colors.white, w: FontWeight.w800)),
+      );
+
+  Widget _hdPill(String label, IconData icon, VoidCallback onTap, {int badge = 0}) =>
+      YmPressable(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.92),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Ym.amber.withOpacity(0.45)),
+            boxShadow: Ym.shadow(Ym.amberDark, 0.1),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 17, color: Ym.amberDark),
+              const SizedBox(width: 7),
+              Text(label, style: Ym.t(12.5, w: FontWeight.w700)),
+              if (badge > 0) ...[
+                const SizedBox(width: 7),
+                _hdCount(badge, Ym.amberDark),
+              ],
+            ],
+          ),
+        ),
+      );
+
+  Widget _hdHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(2.5),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const LinearGradient(colors: [Ym.amber, Ym.amberDark]),
+                  boxShadow: Ym.shadow(Ym.amberDark, 0.3),
+                ),
+                child: GestureDetector(
+                  onTap: () => showAccountSheet(context,
+                      roleLabel: 'Help Desk', onLogout: _handleLogout),
+                  child: const CircleAvatar(
+                    radius: 21,
+                    backgroundColor: Colors.white,
+                    child: Icon(Icons.support_agent_rounded,
+                        color: Ym.amberDark, size: 24),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    RichText(
+                      text: TextSpan(children: [
+                        TextSpan(text: 'YATRA ', style: Ym.h(16)),
+                        TextSpan(text: 'MITRA', style: Ym.h(16, color: Ym.green)),
+                      ]),
+                    ),
+                    Text('Help Desk', style: Ym.t(11.5, color: Ym.grey, w: FontWeight.w600)),
+                  ],
+                ),
+              ),
+              YmRoundButton(
+                  icon: Iconsax.notification,
+                  badge: _unreadCount,
+                  onTap: _showNotificationsSheet),
+              const SizedBox(width: 10),
+              YmRoundButton(icon: Iconsax.logout, color: Ym.red, onTap: _handleLogout),
+            ],
+          ),
+          const SizedBox(height: 14),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _hdPill('Registrations', Icons.how_to_reg_outlined,
+                    _showPendingRegistrationsSheet,
+                    badge: _pendingRegistrations.length),
+                const SizedBox(width: 8),
+                _hdPill('Payment requests', Icons.payments_outlined,
+                    _openPaymentRequests,
+                    badge: _paymentRequestCount),
+                const SizedBox(width: 8),
+                _hdPill('Announcements', Icons.campaign_outlined, _showAnnouncementsSheet,
+                    badge: _announcements.length),
+                const SizedBox(width: 8),
+                _hdPill('Share link', Icons.share_outlined, _showRegistrationLinkDialog),
+                const SizedBox(width: 8),
+                _hdPill('Refresh', Icons.refresh_rounded, _loadDashboardData),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _hdTabs() => Container(
+        margin: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: Ym.shadow(Ym.navy, 0.06),
+        ),
+        child: TabBar(
+          controller: _tabController,
+          dividerColor: Colors.transparent,
+          indicatorSize: TabBarIndicatorSize.tab,
+          indicator: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            gradient: const LinearGradient(colors: [Ym.amber, Ym.amberDark]),
+          ),
+          labelColor: Ym.navy,
+          unselectedLabelColor: Ym.grey,
+          labelStyle: Ym.h(13, w: FontWeight.w800),
+          unselectedLabelStyle: Ym.t(13, w: FontWeight.w600),
+          tabs: [
+            Tab(text: 'Students (${_students.length})'),
+            Tab(text: 'System Routes (${_routesWithStops.length})'),
+          ],
+        ),
+      );
+
+  Widget _hdStat(String value, String label, IconData icon, Color color) => Expanded(
+        child: YmCard(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          radius: 20,
+          child: Column(
+            children: [
+              Icon(icon, color: color, size: 20),
+              const SizedBox(height: 6),
+              Text(value, style: Ym.h(19)),
+              Text(label, style: Ym.t(11, color: Ym.grey)),
+            ],
+          ),
+        ),
+      );
+
+  Widget _hdAction(String label, IconData icon, Color color, VoidCallback onTap) =>
+      Expanded(
+        child: YmPressable(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 2),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            // icon above the word, so four buttons always fit side by side
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 18, color: color),
+                const SizedBox(height: 3),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(label, style: Ym.t(11.5, color: color, w: FontWeight.w800)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+  Widget _hdStudentCard(Map<String, dynamic> student, int index) {
+    final fee = (student['fee_status'] ?? 'unpaid').toString().toLowerCase();
+    final feeColor = fee == 'paid' ? Ym.green : (fee == 'partial' ? Ym.amberDark : Ym.red);
+    final name = (student['student_name'] ?? '').toString();
+    final stop = student['boarding_point']?.toString();
+    final hasStop = stop != null && stop.isNotEmpty;
+
+    return YmFadeSlide(
+      index: index > 6 ? 6 : index,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: YmCard(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 46,
+                    height: 46,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Ym.amber, Ym.amberDark],
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Text(name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase(),
+                        style: Ym.h(19, color: Colors.white)),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(name, style: Ym.h(15.5)),
+                        const SizedBox(height: 3),
+                        Text('USN: ${student['enrollment_no'] ?? ''}',
+                            style: Ym.t(12, color: Ym.grey, w: FontWeight.w600)),
+                      ],
+                    ),
+                  ),
+                  YmChip(_capitalize(student['fee_status']), color: feeColor),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if ((student['department'] ?? '').toString().isNotEmpty)
+                    YmChip(student['department'].toString(),
+                        color: Ym.blue, icon: Icons.apartment_rounded),
+                  if ((student['year'] ?? '').toString().isNotEmpty)
+                    YmChip(student['year'].toString(),
+                        color: Ym.purple, icon: Icons.school_outlined),
+                  YmChip(hasStop ? stop : 'Stop pending assignment',
+                      color: hasStop ? Ym.green : Ym.amberDark,
+                      icon: Icons.location_on_outlined),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  _hdAction('Payment', Icons.payments_outlined, Ym.green,
+                      () => showRecordPaymentSheet(context, student, onDone: _loadDashboardData)),
+                  const SizedBox(width: 6),
+                  _hdAction('Edit', Icons.edit_outlined, Ym.blue, () => _openFormModal(student)),
+                  const SizedBox(width: 6),
+                  _hdAction('Card', Icons.contactless_outlined, Ym.purple,
+                      () => showLinkRfidSheet(context, student, onDone: _loadDashboardData)),
+                  const SizedBox(width: 6),
+                  _hdAction('Delete', Icons.delete_outline_rounded, Ym.red,
+                      () => _handleDelete(student['id'])),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _hdStudentsTab() {
+    final paid = _students.where((s) => (s['fee_status'] ?? '').toString().toLowerCase() == 'paid').length;
+    return RefreshIndicator(
+      color: Ym.amber,
+      onRefresh: _loadDashboardData,
+      child: _students.isEmpty
+          ? ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: const [
+                SizedBox(height: 60),
+                YmEmpty(
+                  icon: Icons.people_alt_outlined,
+                  title: 'No profiles registered',
+                  subtitle:
+                      'Add a student with the button below, or share the registration link.',
+                ),
+              ],
+            )
+          : ListView.builder(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 130),
+              itemCount: _students.length + 1,
+              itemBuilder: (context, index) {
+                if (index == 0) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: Row(
+                      children: [
+                        _hdStat('${_students.length}', 'Students', Icons.groups_rounded, Ym.blue),
+                        const SizedBox(width: 10),
+                        _hdStat('$paid', 'Fee paid', Icons.check_circle_rounded, Ym.green),
+                        const SizedBox(width: 10),
+                        _hdStat('${_students.length - paid}', 'Fee pending',
+                            Icons.hourglass_bottom_rounded, Ym.amberDark),
+                      ],
+                    ),
+                  );
+                }
+                return _hdStudentCard(_students[index - 1], index - 1);
+              },
+            ),
+    );
+  }
+
+  Widget _hdRoutesTab() {
+    if (_routesWithStops.isEmpty) {
+      return ListView(
+        children: const [
+          SizedBox(height: 60),
+          YmEmpty(
+            icon: Icons.route_rounded,
+            title: 'No routes defined',
+            subtitle: 'The admin adds routes and stops. They appear here.',
+          ),
+        ],
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 130),
+      itemCount: _routesWithStops.length,
+      itemBuilder: (context, index) {
+        final route = _routesWithStops[index];
+        final stops = route['stops'] as List? ?? [];
+        return YmFadeSlide(
+          index: index > 6 ? 6 : index,
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: Ym.shadow(),
+            ),
+            child: Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                tilePadding: const EdgeInsets.fromLTRB(14, 6, 14, 6),
+                childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                iconColor: Ym.grey,
+                leading: const YmIconBadge(icon: Iconsax.bus, size: 44),
+                title: Text(route['route_name'] ?? 'Unnamed Route', style: Ym.h(15)),
+                subtitle: Padding(
+                  padding: const EdgeInsets.only(top: 5),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: YmChip('${stops.length} stops',
+                        color: Ym.blue, icon: Icons.pin_drop_outlined),
+                  ),
+                ),
+                children: stops.map<Widget>((stop) {
+                  String timeDisplay = '';
+                  if (stop['timing'] != null) {
+                    final rawTime = stop['timing'].toString();
+                    timeDisplay = rawTime.length >= 5 ? rawTime.substring(0, 5) : rawTime;
+                  }
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.location_on_rounded, size: 17, color: Ym.amberDark),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(stop['stop_name'] ?? '',
+                              style: Ym.t(13, w: FontWeight.w600)),
+                        ),
+                        if (timeDisplay.isNotEmpty)
+                          YmChip(timeDisplay, color: Ym.navy, icon: Icons.access_time_rounded),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -1043,240 +1657,44 @@ class HelpDeskDashboardState extends State<HelpDeskDashboard> with SingleTickerP
         }
       },
       child: Scaffold(
-        backgroundColor: const Color(0xFFF9FAFB),
-        appBar: AppBar(
-          title: const Text('Help Desk Dashboard', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: Color(0xFF0F1B4C))),
-          backgroundColor: Colors.white,
-          elevation: 0.5,
-          actions: [
-            // ===== NEW: Announcements Button =====
-            Stack(
+        backgroundColor: Ym.creamTop,
+        body: YmBackground(
+          child: SafeArea(
+            bottom: false,
+            child: Column(
               children: [
-                IconButton(
-                  icon: const Icon(Icons.campaign_outlined, color: Color(0xFF3B5BFF)),
-                  onPressed: _showAnnouncementsSheet,
-                  tooltip: 'Announcements',
+                _hdHeader(),
+                _hdTabs(),
+                Expanded(
+                  child: _isLoading
+                      ? const YmSkeletonList(count: 4, height: 110)
+                      : TabBarView(
+                          controller: _tabController,
+                          children: [_hdStudentsTab(), _hdRoutesTab()],
+                        ),
                 ),
-                if (_announcements.isNotEmpty)
-                  Positioned(
-                    right: 8,
-                    top: 8,
-                    child: Container(
-                      width: 16,
-                      height: 16,
-                      decoration: const BoxDecoration(color: Colors.orange, shape: BoxShape.circle),
-                      child: Center(
-                        child: Text('${_announcements.length}', style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                  ),
               ],
             ),
-            // ====================================
-            Stack(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.notifications_outlined, color: Color(0xFF3B5BFF)),
-                  onPressed: _showNotificationsSheet,
-                ),
-                if (_unreadCount > 0)
-                  Positioned(
-                    right: 8,
-                    top: 8,
-                    child: Container(
-                      width: 16,
-                      height: 16,
-                      decoration: const BoxDecoration(color: Colors.redAccent, shape: BoxShape.circle),
-                      child: Center(
-                        child: Text('$_unreadCount', style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            Stack(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.how_to_reg_outlined, color: Color(0xFF3B5BFF)),
-                  tooltip: 'Pending Registrations',
-                  onPressed: _showPendingRegistrationsSheet,
-                ),
-                if (_pendingRegistrations.isNotEmpty)
-                  Positioned(
-                    right: 8,
-                    top: 8,
-                    child: Container(
-                      width: 16,
-                      height: 16,
-                      decoration: const BoxDecoration(color: Colors.orange, shape: BoxShape.circle),
-                      child: Center(
-                        child: Text('${_pendingRegistrations.length}', style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            IconButton(
-              icon: const Icon(Icons.share_outlined, color: Color(0xFF3B5BFF)),
-              tooltip: 'Share Registration Link',
-              onPressed: _showRegistrationLinkDialog,
-            ),
-            IconButton(icon: const Icon(Icons.refresh_rounded, color: Color(0xFF3B5BFF)), onPressed: _loadDashboardData),
-            IconButton(icon: const Icon(Icons.logout_rounded, color: Colors.redAccent), onPressed: _handleLogout, tooltip: 'Log out'),
-          ],
-          bottom: TabBar(
-            controller: _tabController,
-            labelColor: const Color(0xFF3B5BFF),
-            unselectedLabelColor: Colors.grey,
-            indicatorColor: const Color(0xFF3B5BFF),
-            tabs: const [
-              Tab(icon: Icon(Icons.people_alt_outlined), text: "Students"),
-              Tab(icon: Icon(Icons.map_outlined), text: "System Routes")
-            ],
           ),
         ),
-        body: _isLoading
-            ? const Center(child: CircularProgressIndicator(color: Color(0xFF3B5BFF)))
-            : TabBarView(
-                controller: _tabController,
-                children: [
-                  RefreshIndicator(
-                    onRefresh: _loadDashboardData,
-                    child: _students.isEmpty
-                        ? const Center(child: Text('No Profiles Registered.'))
-                        : ListView.builder(
-                            padding: const EdgeInsets.all(12),
-                            itemCount: _students.length,
-                            itemBuilder: (context, index) {
-                              final student = _students[index];
-                              return Card(
-                                margin: const EdgeInsets.only(bottom: 10),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(14.0),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Text(
-                                            student['student_name'] ?? '',
-                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF0F1B4C)),
-                                          ),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                            decoration: BoxDecoration(
-                                              color: _getBadgeBgColor(student['fee_status'] ?? 'unpaid'),
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                            child: Text(
-                                              _capitalize(student['fee_status']),
-                                              style: TextStyle(
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.bold,
-                                                color: _getBadgeTextColor(student['fee_status'] ?? 'unpaid'),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        'USN: ${student['enrollment_no'] ?? ''}',
-                                        style: TextStyle(fontSize: 12, color: Colors.grey.shade600, fontFamily: 'monospace'),
-                                      ),
-                                      Text(
-                                        'Dept: ${student['department'] ?? ''} (${student['year'] ?? ''})',
-                                        style: const TextStyle(fontSize: 12),
-                                      ),
-                                      const Divider(height: 16),
-                                      Row(
-                                        children: [
-                                          const Icon(Icons.location_on_outlined, size: 14, color: Colors.grey),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'Stop: ${student['boarding_point'] ?? 'Pending Assignment'}',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w500,
-                                              color: student['boarding_point'] == null ? Colors.amber.shade800 : Colors.black87,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.end,
-                                        children: [
-                                          IconButton(
-                                            icon: const Icon(Icons.edit, color: Color(0xFF3B5BFF), size: 20),
-                                            onPressed: () => _openFormModal(student),
-                                          ),
-                                          IconButton(
-                                            icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
-                                            onPressed: () => _handleDelete(student['id']),
-                                          ),
-                                        ],
-                                      )
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                  _routesWithStops.isEmpty
-                      ? const Center(child: Text('No routes defined.'))
-                      : ListView.builder(
-                          padding: const EdgeInsets.all(12),
-                          itemCount: _routesWithStops.length,
-                          itemBuilder: (context, index) {
-                            final route = _routesWithStops[index];
-                            final stops = route['stops'] as List? ?? [];
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: const Color(0xFFE2E8F0)),
-                              ),
-                              child: ExpansionTile(
-                                title: Text(
-                                  route['route_name'] ?? 'Unnamed Route',
-                                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF0F1B4C)),
-                                ),
-                                leading: const Icon(Icons.directions_bus_filled_outlined, color: Color(0xFF3B5BFF), size: 22),
-                                children: stops.map<Widget>((stop) {
-                                  String timeDisplay = '';
-                                  if (stop['timing'] != null) {
-                                    final rawTime = stop['timing'].toString();
-                                    timeDisplay = rawTime.length >= 5 ? rawTime.substring(0, 5) : rawTime;
-                                  }
-                                  return ListTile(
-                                    dense: true,
-                                    leading: Icon(Icons.location_on, size: 14, color: Colors.grey[400]),
-                                    title: Text(stop['stop_name'] ?? '', style: const TextStyle(fontSize: 12)),
-                                    trailing: Text(
-                                      timeDisplay,
-                                      style: const TextStyle(
-                                        color: Color(0xFF475569),
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 11,
-                                        fontFamily: 'monospace',
-                                      ),
-                                    ),
-                                  );
-                                }).toList(),
-                              ),
-                            );
-                          },
-                        ),
-                ],
-              ),
-        floatingActionButton: FloatingActionButton(
-          backgroundColor: const Color(0xFF3B5BFF),
-          onPressed: () => _openFormModal(),
-          child: const Icon(Icons.person_add_alt_1, color: Colors.white),
+        floatingActionButton: YmPressable(
+          onTap: () => _openFormModal(),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(colors: [Ym.amber, Ym.amberDark]),
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: Ym.shadow(Ym.amberDark, 0.4),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.person_add_alt_1, color: Ym.navy, size: 21),
+                const SizedBox(width: 9),
+                Text('Add student', style: Ym.h(14)),
+              ],
+            ),
+          ),
         ),
       ),
     );

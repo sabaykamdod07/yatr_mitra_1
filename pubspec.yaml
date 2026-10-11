@@ -23,6 +23,15 @@ dependencies:
   http: ^1.6.0
   url_strategy: ^0.3.0
   flutter_dotenv: ^6.0.1
+  qr_flutter: ^4.1.0
+  url_launcher: ^6.3.2
+  geolocator: ^14.0.2
+  pdf: ^3.11.0
+  printing: ^5.13.0
+  mobile_scanner: ^7.4.2
+  firebase_core: ^4.15.0
+  firebase_messaging: ^16.7.0
+  flutter_local_notifications: ^22.3.1
 
 dev_dependencies:
   flutter_test:
