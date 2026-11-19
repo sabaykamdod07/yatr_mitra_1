@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/eta.dart';
 import '../services/student_context.dart';
 import '../theme/ym_ui.dart';
+import 'emergency_sos_screen.dart';
 import 'faculty_alerts_screen.dart';
 import 'faculty_complaints_screen.dart';
 import 'faculty_profile_screen.dart';
@@ -290,6 +291,7 @@ class _FacultyDashboardScreenState extends State<FacultyDashboardScreen> {
       ));
   void _openAnnouncements() =>
       _push(ParentAnnouncementsScreen(children: [_me], audience: 'faculty'));
+  void _openSos() => _push(const EmergencySosScreen(faculty: true));
   void _openScan() => _push(const ScanPassScreen());
   void _openRequests() => _push(const InchargeRideRequestsScreen());
   void _openStudents() => _push(const InchargeRouteStudentsScreen());
@@ -390,6 +392,16 @@ class _FacultyDashboardScreenState extends State<FacultyDashboardScreen> {
                     ),
         ),
       ),
+      floatingActionButton: (_loading || _error != null || _ctx?.busId == null)
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _openSos,
+              backgroundColor: Ym.red,
+              foregroundColor: Colors.white,
+              elevation: 3,
+              icon: const Icon(Icons.sos_rounded),
+              label: Text('SOS', style: Ym.t(14, color: Colors.white, w: FontWeight.w800)),
+            ),
       bottomNavigationBar: (_loading || _error != null) ? null : _bottomNav(),
     );
   }
@@ -679,7 +691,7 @@ class _FacultyDashboardScreenState extends State<FacultyDashboardScreen> {
               Text(label,
                   textAlign: TextAlign.center,
                   maxLines: 2,
-                  style: Ym.t(11.5, w: FontWeight.w700)),
+                  style: Ym.t(12.5, w: FontWeight.w700)),
             ],
           ),
         ),
@@ -699,7 +711,7 @@ class _FacultyDashboardScreenState extends State<FacultyDashboardScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 5),
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: Ym.red,
+                  color: Color(0xFFE5A323),
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: Colors.white, width: 1.8),
                 ),
@@ -712,22 +724,23 @@ class _FacultyDashboardScreenState extends State<FacultyDashboardScreen> {
 
   Widget _quickAccess() {
     return YmCard(
+      color: const Color(0xFFFFFBF2),
       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 8),
       child: Column(
         children: [
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _action(const YmGradientTile(icon: Iconsax.bus, color: Ym.green), 'Live Bus',
+              _action(const YmShortcutTile(icon: Iconsax.bus, color: Ym.green), 'Live Bus',
                   _openLive),
               _action(
                   _badged(
-                      const YmGradientTile(icon: Iconsax.notification, color: Ym.red),
+                      const YmShortcutTile(icon: Iconsax.notification, color: Ym.red),
                       _alertCount),
                   'Alerts',
                   _openAlerts),
               _action(
-                  const YmGradientTile(icon: Icons.swap_horiz_rounded, color: Ym.blue),
+                  const YmShortcutTile(icon: Icons.swap_horiz_rounded, color: Ym.blue),
                   'Other Buses',
                   _openOtherBuses),
             ],
@@ -738,18 +751,18 @@ class _FacultyDashboardScreenState extends State<FacultyDashboardScreen> {
             children: [
               _action(
                   _badged(
-                      const YmGradientTile(
+                      const YmShortcutTile(
                           icon: Icons.mail_outline_rounded, color: Ym.amberDark),
                       _openComplaintCount),
                   'Complaints',
                   _openComplaints),
               _action(
-                  const YmGradientTile(
+                  const YmShortcutTile(
                       icon: Icons.alt_route_rounded, color: Color(0xFF0D9488)),
                   'Route & Timings',
                   _openRoute),
               _action(
-                  const YmGradientTile(
+                  const YmShortcutTile(
                       icon: Icons.campaign_rounded, color: Color(0xFFE11D48)),
                   'Announcements',
                   _openAnnouncements),
@@ -762,20 +775,21 @@ class _FacultyDashboardScreenState extends State<FacultyDashboardScreen> {
 
   Widget _inchargeTools() {
     return YmCard(
+      color: const Color(0xFFFFFBF2),
       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _action(
-              const YmGradientTile(icon: Icons.qr_code_scanner_rounded, color: Ym.purple),
+              const YmShortcutTile(icon: Icons.qr_code_scanner_rounded, color: Ym.purple),
               'Scan Pass',
               _openScan),
           _action(
-              const YmGradientTile(icon: Icons.event_available_rounded, color: Ym.blue),
+              const YmShortcutTile(icon: Icons.event_available_rounded, color: Ym.blue),
               'Ride Requests',
               _openRequests),
           _action(
-              const YmGradientTile(icon: Icons.groups_rounded, color: Ym.green),
+              const YmShortcutTile(icon: Icons.groups_rounded, color: Ym.green),
               'Route Students',
               _openStudents),
         ],

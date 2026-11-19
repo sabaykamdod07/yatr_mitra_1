@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:device_preview/device_preview.dart';
@@ -23,7 +25,9 @@ Future<void> main() async {
 
   runApp(
     DevicePreview(
-      enabled: true,
+      // The device simulator is only for testing in Chrome / on a computer.
+      // It is OFF in the phone app (APK), so the app uses the real phone screen.
+      enabled: !kReleaseMode && (kIsWeb || !(Platform.isAndroid || Platform.isIOS)),
       builder: (context) => const MyApp(),
     ),
   );
@@ -38,7 +42,18 @@ class MyApp extends StatelessWidget {
       // below are for the device preview
       useInheritedMediaQuery: true,
       locale: DevicePreview.locale(context),
-      builder: DevicePreview.appBuilder,
+      builder: (context, child) {
+        final wrapped = DevicePreview.appBuilder(context, child);
+        // Phones with "Large font" / "Large display" turned up made every screen
+        // overflow. Keep the text at the size the screens were designed for.
+        final mq = MediaQuery.of(context);
+        return MediaQuery(
+          data: mq.copyWith(
+            textScaler: mq.textScaler.clamp(minScaleFactor: 0.9, maxScaleFactor: 1.0),
+          ),
+          child: wrapped,
+        );
+      },
       // till this
       debugShowCheckedModeBanner: false,
       title: 'Yatra Mitra',

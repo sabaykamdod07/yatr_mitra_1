@@ -23,7 +23,10 @@ class _C {
 /// admin. When GPS hardware is connected the
 /// location simply becomes the hardware's location – no change here.
 class EmergencySosScreen extends StatefulWidget {
-  const EmergencySosScreen({super.key});
+  const EmergencySosScreen({super.key, this.faculty = false});
+
+  /// true when a faculty member opens it (their own bus and route are used)
+  final bool faculty;
 
   @override
   State<EmergencySosScreen> createState() => _EmergencySosScreenState();
@@ -45,7 +48,7 @@ class _EmergencySosScreenState extends State<EmergencySosScreen> {
 
   Future<void> _load() async {
     try {
-      final ctx = await StudentContext.load();
+      final ctx = await StudentContext.load(faculty: widget.faculty);
       if (!mounted) return;
       setState(() {
         _ctx = ctx;

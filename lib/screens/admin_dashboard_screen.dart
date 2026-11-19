@@ -8,7 +8,9 @@ import 'pending_credentials_screen.dart';
 import 'role_selection_screen.dart';
 import 'map_picker_screen.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:web/web.dart' as web;
+// import 'package:web/web.dart' as web;
+import 'dart:convert';
+import 'package:file_picker/file_picker.dart';
 import 'admin_drivers_tab.dart';
 import 'admin_fees_screen.dart';
 import 'admin_alerts_screen.dart';
@@ -242,58 +244,60 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
     }
   }
 
-  Future<void> _importExcelFile() async {
+    Future<void> _importExcelFile() async {
     setState(() => _isProcessingExcel = true);
     try {
-      final web.HTMLInputElement uploadInput =
-          web.document.createElement('input') as web.HTMLInputElement;
-      uploadInput.type = 'file';
-      uploadInput.accept = '.csv';
-      uploadInput.click();
+      final result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['csv'],
+        withData: true, // gives the file bytes on both web and phone
+      );
 
-      uploadInput.onChange.listen((web.Event e) {
-        final files = uploadInput.files;
-        if (files != null && files.length > 0) {
-          final file = files.item(0);
-          if (file != null) {
-            final web.FileReader reader = web.FileReader();
-            reader.readAsText(file);
-            reader.onLoadEnd.listen((web.Event loadEvent) {
-              final csvString = reader.result as String;
-              final List<List<dynamic>> csvTable =
-                  const CsvToListConverter().convert(csvString);
-              List<Map<String, dynamic>> temporarilyLoaded = [];
-              for (int i = 1; i < csvTable.length; i++) {
-                final row = csvTable[i];
-                if (row.length >= 2) {
-                  final routeVal =
-                      row[0] != null ? row[0].toString().trim() : '';
-                  final stopVal =
-                      row[1] != null ? row[1].toString().trim() : '';
-                  if (routeVal.isEmpty && stopVal.isEmpty) continue;
-                  String timingVal = '07:30:00';
-                  if (row.length > 2 && row[2] != null) {
-                    timingVal = row[2].toString().trim();
-                  }
-                  temporarilyLoaded.add({
-                    'route_name': routeVal,
-                    'stop_name': stopVal,
-                    'timing': timingVal,
-                  });
-                }
-              }
-              setState(() => _stagedExcelRoutes = temporarilyLoaded);
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                  content: Text(
-                      'Read: ${_stagedExcelRoutes.length} entries queued.'),
-                  backgroundColor: Colors.green,
-                ));
-              }
-            });
+      // user closed the picker without choosing a file
+      if (result == null || result.files.single.bytes == null) return;
+
+      var csvString =
+          utf8.decode(result.files.single.bytes!, allowMalformed: true);
+      // files from Notepad / Excel / Mac differ in how a line ends and may start
+      // with an invisible marker; make them all the same before reading
+      if (csvString.startsWith('\uFEFF')) csvString = csvString.substring(1);
+      csvString = csvString
+          .replaceAll('\r\n', '\n')
+          .replaceAll('\r', '\n')
+          .replaceAll('\n', '\r\n');
+      // Excel in some regions saves with ; instead of ,
+      final firstLine = csvString.split('\r\n').first;
+      if (firstLine.contains(';') && !firstLine.contains(',')) {
+        csvString = csvString.replaceAll(';', ',');
+      }
+      final List<List<dynamic>> csvTable =
+          const CsvToListConverter().convert(csvString);
+
+      final List<Map<String, dynamic>> temporarilyLoaded = [];
+      for (int i = 1; i < csvTable.length; i++) {
+        final row = csvTable[i];
+        if (row.length >= 2) {
+          final routeVal = row[0] != null ? row[0].toString().trim() : '';
+          final stopVal = row[1] != null ? row[1].toString().trim() : '';
+          if (routeVal.isEmpty && stopVal.isEmpty) continue;
+          String timingVal = '07:30:00';
+          if (row.length > 2 && row[2] != null) {
+            timingVal = row[2].toString().trim();
           }
+          temporarilyLoaded.add({
+            'route_name': routeVal,
+            'stop_name': stopVal,
+            'timing': timingVal,
+          });
         }
-      });
+      }
+
+      if (!mounted) return;
+      setState(() => _stagedExcelRoutes = temporarilyLoaded);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Read: ${_stagedExcelRoutes.length} entries queued.'),
+        backgroundColor: Colors.green,
+      ));
     } catch (e) {
       if (mounted) {
         showDialog(
@@ -310,7 +314,7 @@ class AdminDashboardScreenState extends State<AdminDashboardScreen> {
         );
       }
     } finally {
-      setState(() => _isProcessingExcel = false);
+      if (mounted) setState(() => _isProcessingExcel = false);
     }
   }
 
@@ -2971,6 +2975,9 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
   String _filter = 'all'; // all | roles | bus | route
   final Set<dynamic> _expanded = {};
 
+  static const Color _annCream = Color(0xFFFFFBF2);
+  static const Color _annLine = Color(0xFFF1E3C4);
+
   static const List<Map<String, dynamic>> _audiences = [
     {'value': 'all', 'label': 'Everyone', 'icon': Icons.campaign_rounded},
     {'value': 'student', 'label': 'Students', 'icon': Icons.school_rounded},
@@ -3162,21 +3169,21 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
     return InputDecoration(
       labelText: label,
       hintText: hint,
-      prefixIcon: Icon(icon, size: 18, color: const Color(0xFF8892AA)),
+      prefixIcon: Icon(icon, size: 18, color: Ym.amberDark),
       filled: true,
-      fillColor: const Color(0xFFF8FAFC),
+      fillColor: Colors.white,
       labelStyle: const TextStyle(fontSize: 13, color: Color(0xFF6B7A99)),
       hintStyle: TextStyle(fontSize: 13, color: Colors.grey[400]),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: Color(0xFFE8EAF0)),
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: _annLine),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: Color(0xFF3B5BFF), width: 1.5),
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Ym.amberDark, width: 1.6),
       ),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
     );
   }
 
@@ -3287,159 +3294,365 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
     );
   }
 
-  Widget _composeView() {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 4, 20, 40),
-      children: [
-        YmFadeSlide(
-          index: 0,
-          child: Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(26),
-              boxShadow: _adminShadow,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _stepCard({
+    required int step,
+    required String title,
+    String? hint,
+    required Widget child,
+    int index = 0,
+  }) {
+    return YmFadeSlide(
+      index: index,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 14),
+        padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+        decoration: BoxDecoration(
+          color: _annCream,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: _annLine),
+          boxShadow: _adminShadow,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                TextField(
-                  controller: _titleCtrl,
-                  maxLength: 80,
-                  style: const TextStyle(
-                      fontSize: 14, color: Color(0xFF0F1B4C), fontWeight: FontWeight.w600),
-                  decoration: _composerFieldDecoration(
-                    label: 'Title',
-                    hint: 'e.g. Route 4 delayed by 15 minutes',
-                    icon: Icons.title_rounded,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _bodyCtrl,
-                  maxLength: 500,
-                  maxLines: 5,
-                  style: const TextStyle(fontSize: 14, color: Color(0xFF0F1B4C)),
-                  decoration: _composerFieldDecoration(
-                    label: 'Message',
-                    hint: 'Write the announcement details...',
-                    icon: Icons.notes_rounded,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                const Text('SEND TO',
-                    style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 11,
-                        color: Color(0xFF8892AA),
-                        letterSpacing: 0.6)),
-                const SizedBox(height: 10),
                 Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFFBF0),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFF0E2C8)),
+                  width: 30,
+                  height: 30,
+                  alignment: Alignment.center,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(colors: [Ym.amber, Ym.amberDark]),
                   ),
-                  child: Row(
-                    children: [
-                      _buildTargetTypeButton('role', 'Role', Icons.groups_rounded),
-                      _buildTargetTypeButton('bus', 'Bus', Icons.directions_bus_rounded),
-                      _buildTargetTypeButton('route', 'Route', Icons.alt_route_rounded),
-                    ],
-                  ),
+                  child: Text('$step',
+                      style: Ym.t(14, color: Ym.navy, w: FontWeight.w800)),
                 ),
-                const SizedBox(height: 16),
-                if (_targetType == 'role') ...[
-                  _buildRoleSelector(),
-                ] else if (_targetType == 'bus') ...[
-                  _buildBusSelector(),
-                ] else if (_targetType == 'route') ...[
-                  _buildRouteSelector(),
-                ],
-                const SizedBox(height: 18),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Ym.amber.withOpacity(0.14),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Row(
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.send_rounded, size: 16, color: Ym.amberDark),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text('Goes to: $_audienceSummary',
-                            style: Ym.t(12.5, w: FontWeight.w700)),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 18),
-                YmPressable(
-                  onTap: _isSending ? null : _sendAnnouncement,
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(colors: [Ym.amber, Ym.amberDark]),
-                      borderRadius: BorderRadius.circular(18),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Ym.amberDark.withOpacity(0.35),
-                          blurRadius: 16,
-                          offset: const Offset(0, 8),
+                      Text(title, style: Ym.h(16)),
+                      if (hint != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(hint, style: Ym.t(12, color: Ym.grey)),
                         ),
-                      ],
-                    ),
-                    child: Center(
-                      child: _isSending
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(Ym.navy),
-                              ),
-                            )
-                          : const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.send_rounded, size: 18, color: Ym.navy),
-                                SizedBox(width: 10),
-                                Text('Send Announcement',
-                                    style: TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w800,
-                                        color: Ym.navy)),
-                              ],
-                            ),
-                    ),
+                    ],
                   ),
                 ),
               ],
             ),
+            const SizedBox(height: 16),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _composeView() {
+    final hasDraft =
+        _titleCtrl.text.trim().isNotEmpty || _bodyCtrl.text.trim().isNotEmpty;
+    return Column(
+      children: [
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+            children: [
+              _stepCard(
+                step: 1,
+                index: 0,
+                title: 'Who should get it?',
+                hint: 'Choose how to pick the audience',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _targetTypePicker(),
+                    const SizedBox(height: 18),
+                    if (_targetType == 'role')
+                      _buildRoleSelector()
+                    else if (_targetType == 'bus')
+                      _buildBusSelector()
+                    else
+                      _buildRouteSelector(),
+                    const SizedBox(height: 16),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Ym.amber.withOpacity(0.16),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.send_rounded,
+                              size: 16, color: Ym.amberDark),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text('Goes to: $_audienceSummary',
+                                style: Ym.t(12.5, w: FontWeight.w700)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _stepCard(
+                step: 2,
+                index: 1,
+                title: 'Write your message',
+                hint: 'Keep it short and clear',
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: _titleCtrl,
+                      maxLength: 80,
+                      onChanged: (_) => setState(() {}),
+                      style: const TextStyle(
+                          fontSize: 14,
+                          color: Color(0xFF0F1B4C),
+                          fontWeight: FontWeight.w600),
+                      decoration: _composerFieldDecoration(
+                        label: 'Title',
+                        hint: 'e.g. Route 4 delayed by 15 minutes',
+                        icon: Icons.title_rounded,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _bodyCtrl,
+                      maxLength: 500,
+                      maxLines: 5,
+                      onChanged: (_) => setState(() {}),
+                      style: const TextStyle(
+                          fontSize: 14, color: Color(0xFF0F1B4C)),
+                      decoration: _composerFieldDecoration(
+                        label: 'Message',
+                        hint: 'Write the announcement details...',
+                        icon: Icons.notes_rounded,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (hasDraft)
+                _stepCard(
+                  step: 3,
+                  index: 2,
+                  title: 'Preview',
+                  hint: 'How it will look to the people who get it',
+                  child: _previewCard(),
+                ),
+            ],
           ),
         ),
+        _sendBar(),
       ],
     );
   }
 
+  Widget _targetTypePicker() {
+    Widget tile(String type, String label, String sub, IconData icon) {
+      final on = _targetType == type;
+      return Expanded(
+        child: YmPressable(
+          onTap: () => setState(() => _targetType = type),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            margin: const EdgeInsets.symmetric(horizontal: 4),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(
+              color: on ? Colors.white : Colors.white.withOpacity(0.55),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                  color: on ? Ym.amberDark : _annLine, width: on ? 1.6 : 1),
+              boxShadow: on
+                  ? [
+                      BoxShadow(
+                          color: Ym.amber.withOpacity(0.30),
+                          blurRadius: 14,
+                          offset: const Offset(0, 6))
+                    ]
+                  : [],
+            ),
+            child: Column(
+              children: [
+                YmShortcutTile(icon: icon, size: 48),
+                const SizedBox(height: 8),
+                Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Ym.t(13, w: FontWeight.w800)),
+                const SizedBox(height: 1),
+                Text(sub,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Ym.t(11, color: Ym.grey)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        tile('role', 'By role', 'Groups', Icons.groups_rounded),
+        tile('bus', 'One bus', 'Its riders', Icons.directions_bus_rounded),
+        tile('route', 'One route', 'Its riders', Icons.alt_route_rounded),
+      ],
+    );
+  }
+
+  Widget _previewCard() {
+    final title = _titleCtrl.text.trim();
+    final body = _bodyCtrl.text.trim();
+    final target = _targetType == 'role'
+        ? _targetRole
+        : _targetType == 'bus'
+            ? 'bus_${_selectedBusId ?? ''}'
+            : 'route_${_selectedRouteId ?? ''}';
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _annLine),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const YmShortcutTile(icon: Icons.campaign_rounded, size: 44),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title.isEmpty ? 'Your title' : title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Ym.h(14.5)),
+                const SizedBox(height: 4),
+                Text(body.isEmpty ? 'Your message appears here' : body,
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 13, color: Colors.grey[700], height: 1.45)),
+                const SizedBox(height: 8),
+                _InfoChip('To: ${_targetLabel(target)}', color: Ym.amberDark),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sendBar() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
+      decoration: const BoxDecoration(
+        color: Color(0xFFFFF9EE),
+        border: Border(top: BorderSide(color: _annLine)),
+      ),
+      child: YmPressable(
+        onTap: _isSending ? null : _sendAnnouncement,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(colors: [Ym.amber, Ym.amberDark]),
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: Ym.amberDark.withOpacity(0.35),
+                blurRadius: 16,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Center(
+            child: _isSending
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Ym.navy),
+                    ),
+                  )
+                : const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.send_rounded, size: 18, color: Ym.navy),
+                      SizedBox(width: 10),
+                      Text('Send Announcement',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              color: Ym.navy)),
+                    ],
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool _matchesFilter(Map<String, dynamic> a, String f) {
+    final t = (a['target_role'] ?? 'all').toString();
+    switch (f) {
+      case 'roles':
+        return !t.startsWith('bus_') && !t.startsWith('route_');
+      case 'bus':
+        return t.startsWith('bus_');
+      case 'route':
+        return t.startsWith('route_');
+      default:
+        return true;
+    }
+  }
+
+  Widget _filterPill(String key, String label) {
+    final on = _filter == key;
+    final count = _announcements.where((a) => _matchesFilter(a, key)).length;
+    return YmPressable(
+      onTap: () => setState(() => _filter = key),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        decoration: BoxDecoration(
+          color: on ? null : Colors.white,
+          gradient: on ? const LinearGradient(colors: [Ym.amber, Ym.amberDark]) : null,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: on ? Ym.amberDark : _annLine),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label,
+                style: Ym.t(12.5, color: on ? Ym.navy : Ym.grey, w: FontWeight.w800)),
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+              decoration: BoxDecoration(
+                color: on ? Colors.white.withOpacity(0.6) : const Color(0xFFFFF1D2),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text('$count',
+                  style: Ym.t(11, color: Ym.navy, w: FontWeight.w800)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _sentView() {
-    final list = _announcements.where((a) {
-      final t = (a['target_role'] ?? 'all').toString();
-      switch (_filter) {
-        case 'roles':
-          return !t.startsWith('bus_') && !t.startsWith('route_');
-        case 'bus':
-          return t.startsWith('bus_');
-        case 'route':
-          return t.startsWith('route_');
-        default:
-          return true;
-      }
-    }).toList();
+    final list = _announcements.where((a) => _matchesFilter(a, _filter)).toList();
 
     return RefreshIndicator(
       color: Ym.amber,
@@ -3448,24 +3661,21 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(20, 2, 20, 40),
         children: [
-          Wrap(
-            spacing: 8,
-            children: [
-              for (final f in const [
-                ('all', 'All'),
-                ('roles', 'Roles'),
-                ('bus', 'Bus'),
-                ('route', 'Route'),
-              ])
-                ChoiceChip(
-                  label: Text(f.$2),
-                  selected: _filter == f.$1,
-                  selectedColor: Ym.amber.withOpacity(0.3),
-                  onSelected: (_) => setState(() => _filter = f.$1),
-                ),
-            ],
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _filterPill('all', 'All'),
+                const SizedBox(width: 8),
+                _filterPill('roles', 'Roles'),
+                const SizedBox(width: 8),
+                _filterPill('bus', 'Bus'),
+                const SizedBox(width: 8),
+                _filterPill('route', 'Route'),
+              ],
+            ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           if (_isLoading)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 50),
@@ -3503,11 +3713,6 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
     final targetRole = (ann['target_role'] ?? 'all').toString();
     final isBusTarget = targetRole.startsWith('bus_');
     final isRouteTarget = targetRole.startsWith('route_');
-    final chipColor = isBusTarget
-        ? const Color(0xFF2563EB)
-        : isRouteTarget
-            ? const Color(0xFF7C3AED)
-            : _audienceColor(targetRole);
     final chipIcon = isBusTarget
         ? Icons.directions_bus_rounded
         : isRouteTarget
@@ -3533,10 +3738,10 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(22),
+            color: _annCream,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: _annLine),
             boxShadow: _adminShadow,
-            border: Border(left: BorderSide(color: chipColor, width: 5)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -3544,8 +3749,7 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _iconBadge(chipIcon, chipColor.withOpacity(0.12), chipColor,
-                      size: 40, iconSize: 19),
+                  YmShortcutTile(icon: chipIcon, size: 46),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
@@ -3556,12 +3760,13 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
                                 fontWeight: FontWeight.w800,
                                 fontSize: 14.5,
                                 color: Color(0xFF0F1B4C))),
-                        const SizedBox(height: 5),
+                        const SizedBox(height: 6),
                         Wrap(
                           spacing: 6,
                           runSpacing: 4,
                           children: [
-                            _InfoChip('To: ${_targetLabel(targetRole)}', color: chipColor),
+                            _InfoChip('To: ${_targetLabel(targetRole)}',
+                                color: Ym.amberDark),
                             _InfoChip(_ago(ann['created_at']?.toString()),
                                 icon: Icons.access_time_rounded,
                                 color: const Color(0xFF8892AA)),
@@ -3581,7 +3786,9 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
+              Container(height: 1, color: _annLine),
+              const SizedBox(height: 12),
               AnimatedSize(
                 duration: const Duration(milliseconds: 200),
                 alignment: Alignment.topCenter,
@@ -3603,54 +3810,19 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
     );
   }
 
-  Widget _buildTargetTypeButton(String type, String label, IconData icon) {
-    final isActive = _targetType == type;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => _targetType = type),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            color: isActive ? Colors.white : Colors.transparent,
-            borderRadius: BorderRadius.circular(11),
-            boxShadow: isActive
-                ? [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 6, offset: const Offset(0, 2))]
-                : [],
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 15, color: isActive ? Ym.amberDark : const Color(0xFF8892AA)),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: isActive ? Ym.amberDark : const Color(0xFF8892AA),
-                  fontSize: 12.5,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildRoleSelector() {
     final roles = [
-      ('all', 'Everyone', Icons.public_rounded, const Color(0xFF3B5BFF)),
-      ('student', 'Students', Icons.school_rounded, const Color(0xFF7C3AED)),
-      ('faculty', 'Faculty', Icons.badge_rounded, const Color(0xFF2563EB)),
-      ('driver', 'Drivers', Icons.directions_car_rounded, const Color(0xFFD97706)),
-      ('help_desk', 'Help Desk', Icons.support_agent_rounded, const Color(0xFF059669)),
-      ('parent', 'Parents', Icons.family_restroom_rounded, const Color(0xFFDB2777)),
+      ('all', 'Everyone', Icons.public_rounded),
+      ('student', 'Students', Icons.school_rounded),
+      ('faculty', 'Faculty', Icons.badge_rounded),
+      ('driver', 'Drivers', Icons.directions_car_rounded),
+      ('help_desk', 'Help Desk', Icons.support_agent_rounded),
+      ('parent', 'Parents', Icons.family_restroom_rounded),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Select audience', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Color(0xFF0F1B4C))),
+        Text('Select audience', style: Ym.t(12, w: FontWeight.w700)),
         const SizedBox(height: 10),
         GridView.builder(
           shrinkWrap: true,
@@ -3663,7 +3835,7 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
           ),
           itemCount: roles.length,
           itemBuilder: (context, index) {
-            final (roleValue, roleLabel, roleIcon, roleColor) = roles[index];
+            final (roleValue, roleLabel, roleIcon) = roles[index];
             final isSelected = _targetRole == roleValue;
             return GestureDetector(
               onTap: () => setState(() => _targetRole = roleValue),
@@ -3671,16 +3843,18 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
                 duration: const Duration(milliseconds: 150),
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 decoration: BoxDecoration(
-                  color: isSelected ? roleColor.withOpacity(0.1) : Colors.white,
-                  borderRadius: BorderRadius.circular(13),
+                  color: isSelected ? Ym.amber.withOpacity(0.22) : Colors.white,
+                  borderRadius: BorderRadius.circular(14),
                   border: Border.all(
-                    color: isSelected ? roleColor : const Color(0xFFE8EAF0),
+                    color: isSelected ? Ym.amberDark : _annLine,
                     width: isSelected ? 1.5 : 1,
                   ),
                 ),
                 child: Row(
                   children: [
-                    Icon(roleIcon, size: 16, color: isSelected ? roleColor : const Color(0xFF8892AA)),
+                    Icon(roleIcon,
+                        size: 17,
+                        color: isSelected ? Ym.navy : const Color(0xFF8892AA)),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -3688,12 +3862,14 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
-                          color: isSelected ? roleColor : const Color(0xFF4A5468),
+                          color: isSelected ? Ym.navy : const Color(0xFF4A5468),
                           fontSize: 12.5,
                         ),
                       ),
                     ),
-                    if (isSelected) Icon(Icons.check_circle_rounded, size: 15, color: roleColor),
+                    if (isSelected)
+                      const Icon(Icons.check_circle_rounded,
+                          size: 16, color: Ym.amberDark),
                   ],
                 ),
               ),
@@ -3704,19 +3880,41 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
     );
   }
 
+  Widget _pickerBox({required Widget child}) => Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _annLine),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        child: child,
+      );
+
+  Widget _pickedNote(String text) => Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Ym.amber.withOpacity(0.16),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.check_circle_rounded, size: 16, color: Ym.amberDark),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(text,
+                  style: Ym.t(12, color: Ym.navy, w: FontWeight.w600)),
+            ),
+          ],
+        ),
+      );
+
   Widget _buildBusSelector() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Select bus', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Color(0xFF0F1B4C))),
+        Text('Select bus', style: Ym.t(12, w: FontWeight.w700)),
         const SizedBox(height: 10),
-        Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE8EAF0)),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 6),
+        _pickerBox(
           child: DropdownButtonHideUnderline(
             child: DropdownButton<dynamic>(
               value: _selectedBusId,
@@ -3732,7 +3930,7 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
                   child: Row(
                     children: [
-                      const Icon(Icons.directions_bus_rounded, size: 16, color: Color(0xFF2563EB)),
+                      const Icon(Icons.directions_bus_rounded, size: 16, color: Ym.amberDark),
                       const SizedBox(width: 10),
                       Text(bus['bus_number'] ?? 'Bus', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F1B4C))),
                     ],
@@ -3745,25 +3943,7 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
         ),
         if (_selectedBusId != null) ...[
           const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFF3B5BFF).withOpacity(0.08),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: const [
-                Icon(Icons.check_circle_rounded, size: 16, color: Color(0xFF3B5BFF)),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Message will go to all students and faculty on this bus route',
-                    style: TextStyle(fontSize: 12, color: Color(0xFF3B5BFF)),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          _pickedNote('Message will go to all students and faculty on this bus route'),
         ],
       ],
     );
@@ -3773,15 +3953,9 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Select route', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Color(0xFF0F1B4C))),
+        Text('Select route', style: Ym.t(12, w: FontWeight.w700)),
         const SizedBox(height: 10),
-        Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE8EAF0)),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 6),
+        _pickerBox(
           child: DropdownButtonHideUnderline(
             child: DropdownButton<dynamic>(
               value: _selectedRouteId,
@@ -3797,7 +3971,7 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
                   child: Row(
                     children: [
-                      const Icon(Icons.alt_route_rounded, size: 16, color: Color(0xFF7C3AED)),
+                      const Icon(Icons.alt_route_rounded, size: 16, color: Ym.amberDark),
                       const SizedBox(width: 10),
                       Text(route['route_name'] ?? 'Route', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F1B4C))),
                     ],
@@ -3810,25 +3984,7 @@ class _AnnouncementsTabState extends State<_AnnouncementsTab> {
         ),
         if (_selectedRouteId != null) ...[
           const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFF3B5BFF).withOpacity(0.08),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: const [
-                Icon(Icons.check_circle_rounded, size: 16, color: Color(0xFF3B5BFF)),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Message will go to all students and faculty assigned to this route',
-                    style: TextStyle(fontSize: 12, color: Color(0xFF3B5BFF)),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          _pickedNote('Message will go to all students and faculty assigned to this route'),
         ],
       ],
     );
@@ -4198,6 +4354,7 @@ class _HomeTab extends StatelessWidget {
 
   Widget _quickActions(BuildContext context) {
     return YmCard(
+      color: const Color(0xFFFFFBF2),
       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 8),
       child: Column(
         children: [
@@ -4205,16 +4362,16 @@ class _HomeTab extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _action(
-                  const YmGradientTile(icon: Icons.mail_outline_rounded, color: Ym.blue),
+                  const YmShortcutTile(icon: Icons.mail_outline_rounded, color: Ym.blue),
                   'Inbox',
                   () => _open(context, const InboxScreen(isAdmin: true))),
               _action(
-                  const YmGradientTile(
+                  const YmShortcutTile(
                       icon: Icons.notifications_active_outlined, color: Ym.red),
                   'Alerts',
                   () => _open(context, const AdminAlertsScreen())),
               _action(
-                  const YmGradientTile(icon: Iconsax.bus, color: Ym.green),
+                  const YmShortcutTile(icon: Iconsax.bus, color: Ym.green),
                   'Buses',
                   () => _open(context, const AdminBusesScreen())),
             ],
@@ -4224,22 +4381,22 @@ class _HomeTab extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _action(
-                  const YmGradientTile(
+                  const YmShortcutTile(
                       icon: Icons.account_balance_wallet_outlined,
                       color: Ym.amberDark),
                   'Fees & Years',
                   () => _open(context, const AdminFeesScreen())),
               _action(
                   isProcessingExcel
-                      ? const YmGradientTile(
+                      ? const YmShortcutTile(
                           icon: null,
                           color: Ym.purple,
                           child: SizedBox(
                               width: 22,
                               height: 22,
                               child: CircularProgressIndicator(
-                                  strokeWidth: 2.4, color: Colors.white)))
-                      : const YmGradientTile(
+                                  strokeWidth: 2.4, color: Ym.navy)))
+                      : const YmShortcutTile(
                           icon: Icons.note_add_rounded, color: Ym.purple),
                   'CSV Upload',
                   () => _showCsvDialog(context)),
@@ -4247,7 +4404,7 @@ class _HomeTab extends StatelessWidget {
                   Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      const YmGradientTile(
+                      const YmShortcutTile(
                           icon: Icons.badge_outlined, color: Color(0xFF0EA5E9)),
                       if (pendingCredentials > 0)
                         Positioned(
@@ -4259,7 +4416,7 @@ class _HomeTab extends StatelessWidget {
                             padding: const EdgeInsets.symmetric(horizontal: 5),
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                              color: Ym.red,
+                              color: Color(0xFFE5A323),
                               borderRadius: BorderRadius.circular(10),
                               border: Border.all(color: Colors.white, width: 1.8),
                             ),
@@ -4373,20 +4530,23 @@ class _HomeTab extends StatelessWidget {
             else
               YmFadeSlide(
                 index: 4,
-                child: GridView.count(
-                  crossAxisCount: 2,
+                child: GridView(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
-                  crossAxisSpacing: 14,
-                  mainAxisSpacing: 14,
-                  childAspectRatio: 0.98,
+                  // fixed card height (not a ratio) so the cards never overflow
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 14,
+                    mainAxisSpacing: 14,
+                    mainAxisExtent: 196,
+                  ),
                   children: [
-                    _StatCard(icon: Icons.people_rounded, iconBg: const Color(0xFFEDE9FE), iconColor: const Color(0xFF7C3AED), title: 'Total Commuters', value: '$totalStudents', subtitle: 'Students & Faculties', badge: 'Active', badgeColor: const Color(0xFF059669)),
-                    _StatCard(icon: Icons.support_agent_rounded, iconBg: const Color(0xFFD1FAE5), iconColor: const Color(0xFF059669), title: 'Help Desk Accounts', value: '$helpdeskCount', subtitle: 'Active Help Desk', badge: 'Active', badgeColor: const Color(0xFF059669)),
-                    _StatCard(icon: Icons.directions_bus_rounded, iconBg: const Color(0xFFDBEAFE), iconColor: const Color(0xFF2563EB), title: 'Total Buses', value: '$totalBuses', subtitle: 'Active Buses', badge: 'On Route', badgeColor: const Color(0xFF2563EB)),
-                    _StatCard(icon: Icons.person_rounded, iconBg: const Color(0xFFFEF3C7), iconColor: const Color(0xFFD97706), title: 'Total Drivers', value: '$totalDrivers', subtitle: 'Active Drivers', badge: 'Active', badgeColor: const Color(0xFFD97706)),
-                    _StatCard(icon: Icons.route_rounded, iconBg: const Color(0xFFEDE9FE), iconColor: const Color(0xFF7C3AED), title: 'Total Routes', value: '$totalRoutes', subtitle: 'Active Routes', badge: 'Synced', badgeColor: const Color(0xFF7C3AED)),
-                    _StatCard(icon: Icons.bar_chart_rounded, iconBg: const Color(0xFFD1FAE5), iconColor: const Color(0xFF059669), title: 'Trips Today', value: '$tripsToday', subtitle: tripsRunning > 0 ? '$tripsRunning running now' : 'Completed Trips', badge: tripsRunning > 0 ? 'Live' : 'Active', badgeColor: const Color(0xFF059669)),
+                    _StatCard(icon: Icons.people_rounded, title: 'Total Commuters', value: '$totalStudents', subtitle: 'Students & Faculties', badge: 'Active'),
+                    _StatCard(icon: Icons.support_agent_rounded, title: 'Help Desk Accounts', value: '$helpdeskCount', subtitle: 'Active Help Desk', badge: 'Active'),
+                    _StatCard(icon: Icons.directions_bus_rounded, title: 'Total Buses', value: '$totalBuses', subtitle: 'Active Buses', badge: 'On Route'),
+                    _StatCard(icon: Icons.person_rounded, title: 'Total Drivers', value: '$totalDrivers', subtitle: 'Active Drivers', badge: 'Active'),
+                    _StatCard(icon: Icons.route_rounded, title: 'Total Routes', value: '$totalRoutes', subtitle: 'Active Routes', badge: 'Synced'),
+                    _StatCard(icon: Icons.bar_chart_rounded, title: 'Trips Today', value: '$tripsToday', subtitle: tripsRunning > 0 ? '$tripsRunning running now' : 'Completed Trips', badge: tripsRunning > 0 ? 'Live' : 'Active'),
                   ],
                 ),
               ),
@@ -4614,59 +4774,47 @@ class _SystemStatusItem extends StatelessWidget {
 // ══════════════════════════════════════════════
 class _StatCard extends StatelessWidget {
   final IconData icon;
-  final Color iconBg;
-  final Color iconColor;
   final String title;
   final String value;
   final String subtitle;
   final String badge;
-  final Color badgeColor;
 
   const _StatCard({
     required this.icon,
-    required this.iconBg,
-    required this.iconColor,
     required this.title,
     required this.value,
     required this.subtitle,
     required this.badge,
-    required this.badgeColor,
   });
 
   @override
   Widget build(BuildContext context) {
     return YmCard(
+      color: const Color(0xFFFFFBF2),
       padding: const EdgeInsets.all(16),
       radius: 24,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: iconBg,
-              borderRadius: BorderRadius.circular(15),
-            ),
-            child: Icon(icon, color: iconColor, size: 22),
-          ),
-          const Spacer(),
-          Text(title, style: Ym.t(12, color: Ym.grey, w: FontWeight.w600)),
-          const SizedBox(height: 2),
-          Text(value, style: Ym.h(28)),
-          const SizedBox(height: 8),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Text(subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Ym.t(11, color: Ym.grey)),
-              ),
-              const SizedBox(width: 6),
-              YmChip(badge, color: badgeColor),
+              YmShortcutTile(icon: icon, size: 48),
+              const Spacer(),
+              YmChip(badge,
+                  color: badge == 'Live' ? Ym.green : Ym.amberDark),
             ],
           ),
+          const Spacer(),
+          Text(value, style: Ym.h(30)),
+          const SizedBox(height: 3),
+          Text(title,
+              maxLines: 2,
+              style: Ym.t(13.5, w: FontWeight.w700)),
+          const SizedBox(height: 2),
+          Text(subtitle,
+              maxLines: 2,
+              style: Ym.t(11.5, color: Ym.grey)),
         ],
       ),
     );

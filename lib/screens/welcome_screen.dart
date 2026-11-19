@@ -27,7 +27,6 @@ class _WelcomeScreenState extends State<WelcomeScreen> with WidgetsBindingObserv
   static const _sheetColor = Color(0xFFFFF8EC);
   static const _navy = Color(0xFF14284B);
   static const _amber = Color(0xFFFFA826);
-  static const _body = Color(0xFF3C4558);
   static const _muted = Color(0xFF6B7385);
 
   late VideoPlayerController _video;
@@ -212,7 +211,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> with WidgetsBindingObserv
                 // the top part (brand, headline, paragraph, video) and the curved sheet
                 final heroH = math.max(430.0, math.min(h * 0.55, 520.0));
                 final sheetTop = heroH - 34;
-                final sheetH = math.max(h - sheetTop, 330.0 + bottomInset);
+                final sheetH = math.max(h - sheetTop, 420.0 + bottomInset);
                 final total = sheetTop + sheetH;
 
                 return SingleChildScrollView(
@@ -281,21 +280,6 @@ class _WelcomeScreenState extends State<WelcomeScreen> with WidgetsBindingObserv
               _brand(),
               const SizedBox(height: 24),
               _headline(w),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: w * 0.55,
-                child: Text(
-                  "Yatra Mitra is an AI-powered platform designed to improve "
-                  "children's safety during travel by providing smart route "
-                  "assistance, emergency support, and digital accessibility.",
-                  style: GoogleFonts.inter(
-                    fontSize: 13,
-                    height: 1.55,
-                    color: _body,
-                    fontWeight: FontWeight.w400,
-                  ),
-                ),
-              ),
             ],
           ),
         ),
@@ -509,17 +493,24 @@ class _WelcomeScreenState extends State<WelcomeScreen> with WidgetsBindingObserv
               child: Icon(icon, color: _navy, size: 29),
             ),
             const SizedBox(height: 12),
-            Text(title,
-                textAlign: TextAlign.center,
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 13.5,
-                    height: 1.2,
-                    fontWeight: FontWeight.w800,
-                    color: _navy)),
+            // scaleDown: a long word like "Empowerment" shrinks instead of breaking
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(title,
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13.5,
+                      height: 1.2,
+                      fontWeight: FontWeight.w800,
+                      color: _navy)),
+            ),
             const SizedBox(height: 6),
-            Text(sub,
-                textAlign: TextAlign.center,
-                style: GoogleFonts.inter(fontSize: 11, height: 1.35, color: _muted)),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(sub,
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.inter(fontSize: 11, height: 1.35, color: _muted)),
+            ),
             const SizedBox(height: 10),
             Icon(Icons.arrow_forward_rounded, color: arrow, size: 22),
           ],

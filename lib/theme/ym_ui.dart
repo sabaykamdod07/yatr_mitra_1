@@ -458,6 +458,44 @@ class YmGradientTile extends StatelessWidget {
   }
 }
 
+/// Cream-and-amber shortcut tile with a navy icon (the look of the quick-action
+/// buttons on every dashboard). Same arguments as [YmGradientTile] so it can be
+/// swapped in; `color` is accepted but ignored so the whole app stays one family.
+class YmShortcutTile extends StatelessWidget {
+  const YmShortcutTile(
+      {super.key, required this.icon, this.color, this.size = 60, this.child});
+  final IconData? icon;
+  final Color? color;
+  final double size;
+  final Widget? child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(size * 0.34),
+        gradient: const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFFFF4DA), Color(0xFFFCDC98)],
+        ),
+        border: Border.all(color: const Color(0xFFF4D183), width: 1),
+        boxShadow: [
+          BoxShadow(
+              color: const Color(0xFFF5B94A).withOpacity(0.30),
+              blurRadius: 16,
+              offset: const Offset(0, 7)),
+        ],
+      ),
+      child: Center(
+        child: child ?? Icon(icon, color: Ym.navy, size: size * 0.44),
+      ),
+    );
+  }
+}
+
 class YmSectionTitle extends StatelessWidget {
   const YmSectionTitle(this.text, {super.key, this.trailing});
   final String text;

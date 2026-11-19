@@ -938,7 +938,7 @@ class _ParentDashboardScreenState extends State<ParentDashboardScreen> {
               Text(label,
                   textAlign: TextAlign.center,
                   maxLines: 2,
-                  style: Ym.t(11.5, w: FontWeight.w700)),
+                  style: Ym.t(12.5, w: FontWeight.w700)),
             ],
           ),
         ),
@@ -951,17 +951,18 @@ class _ParentDashboardScreenState extends State<ParentDashboardScreen> {
         );
 
     return YmCard(
+      color: const Color(0xFFFFFBF2),
       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 8),
       child: Column(
         children: [
           row([
-            _action(const YmGradientTile(icon: Iconsax.bus, color: Ym.green),
+            _action(const YmShortcutTile(icon: Iconsax.bus, color: Ym.green),
                 'Live Bus', _openLive),
             _action(
                 Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    const YmGradientTile(
+                    const YmShortcutTile(
                         icon: Iconsax.notification, color: Ym.red),
                     if (_alertCount > 0)
                       Positioned(
@@ -973,7 +974,7 @@ class _ParentDashboardScreenState extends State<ParentDashboardScreen> {
                           padding: const EdgeInsets.symmetric(horizontal: 5),
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            color: Ym.navy,
+                            color: Color(0xFFE5A323),
                             borderRadius: BorderRadius.circular(10),
                             border: Border.all(color: Colors.white, width: 1.8),
                           ),
@@ -987,7 +988,7 @@ class _ParentDashboardScreenState extends State<ParentDashboardScreen> {
                 'Alerts',
                 _openAlerts),
             _action(
-                const YmGradientTile(
+                const YmShortcutTile(
                     icon: Icons.fact_check_rounded, color: Ym.blue),
                 'Attendance',
                 _openAttendance),
@@ -995,17 +996,17 @@ class _ParentDashboardScreenState extends State<ParentDashboardScreen> {
           const SizedBox(height: 20),
           row([
             _action(
-                const YmGradientTile(
+                const YmShortcutTile(
                     icon: Icons.mail_outline_rounded, color: Ym.amberDark),
                 'Complaints',
                 _openComplaints),
             _action(
-                const YmGradientTile(
+                const YmShortcutTile(
                     icon: Icons.event_busy_rounded, color: Ym.purple),
                 'Leave',
                 _openLeave),
             _action(
-                const YmGradientTile(
+                const YmShortcutTile(
                     icon: Icons.alt_route_rounded, color: Color(0xFF0D9488)),
                 'Route & Timings',
                 _openRoute),
@@ -1013,17 +1014,17 @@ class _ParentDashboardScreenState extends State<ParentDashboardScreen> {
           const SizedBox(height: 20),
           row([
             _action(
-                const YmGradientTile(
+                const YmShortcutTile(
                     icon: Icons.campaign_rounded, color: Color(0xFFE11D48)),
                 'Announcements',
                 _openAnnouncements),
             _action(
-                const YmGradientTile(
+                const YmShortcutTile(
                     icon: Icons.support_agent_rounded, color: Color(0xFF0EA5E9)),
                 'Help & Contact',
                 _openContact),
             _action(
-                const YmGradientTile(
+                const YmShortcutTile(
                     icon: Icons.call_rounded, color: Ym.green),
                 'Call Driver',
                 _callDriver),
@@ -1031,18 +1032,18 @@ class _ParentDashboardScreenState extends State<ParentDashboardScreen> {
           const SizedBox(height: 20),
           row([
             _action(
-                const YmGradientTile(
+                const YmShortcutTile(
                     icon: Icons.account_balance_wallet_outlined,
                     color: Ym.amberDark),
                 'Payments',
                 _openPayments),
             _action(
-                const YmGradientTile(
+                const YmShortcutTile(
                     icon: Icons.badge_outlined, color: Ym.purple),
                 'Bus Pass',
                 _openBusPass),
             _action(
-                const YmGradientTile(
+                const YmShortcutTile(
                     icon: Icons.notifications_active_outlined, color: Ym.red),
                 'Alert Distance',
                 _openAlertDistance),

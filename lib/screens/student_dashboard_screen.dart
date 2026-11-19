@@ -1277,7 +1277,7 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen>
               Text(label,
                   textAlign: TextAlign.center,
                   maxLines: 2,
-                  style: Ym.t(11.5, w: FontWeight.w700)),
+                  style: Ym.t(12.5, w: FontWeight.w700)),
             ],
           ),
         ),
@@ -1285,6 +1285,7 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen>
 
   Widget _buildQuickActions() {
     return YmCard(
+      color: const Color(0xFFFFFBF2),
       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 8),
       child: Column(
         children: [
@@ -1292,22 +1293,22 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _action(
-                  const YmGradientTile(
+                  const YmShortcutTile(
                       icon: Icons.event_busy_rounded, color: Ym.purple),
                   'Mark Absent',
                   () => showMarkAbsentSheet(context)),
               _action(
-                  const YmGradientTile(
+                  const YmShortcutTile(
                       icon: Iconsax.wallet_3, color: Ym.amberDark),
                   'Payments',
                   () => _push(const PaymentsScreen())),
               _action(
-                  const YmGradientTile(
+                  const YmShortcutTile(
                       icon: Icons.badge_outlined, color: Ym.blue),
                   'Bus Pass',
                   () => _push(const BusPassScreen())),
               _action(
-                  const YmGradientTile(icon: Iconsax.bus, color: Ym.green),
+                  const YmShortcutTile(icon: Iconsax.bus, color: Ym.green),
                   'Other Buses',
                   () => _push(const OtherBusesScreen())),
             ],
@@ -1317,16 +1318,16 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _action(
-                  const YmGradientTile(
+                  const YmShortcutTile(
                       icon: Iconsax.location, color: Color(0xFF0EA5E9)),
                   'Geofence Radius',
                   _openGeofenceSettings),
               _action(
-                  const YmGradientTile(icon: Iconsax.clock, color: Ym.navy),
+                  const YmShortcutTile(icon: Iconsax.clock, color: Ym.navy),
                   'History',
                   () => _push(const StudentHistoryScreen())),
               _action(
-                  const YmGradientTile(
+                  const YmShortcutTile(
                       icon: Iconsax.message_text, color: Color(0xFFEA580C)),
                   'Complaints',
                   () => _push(const ComplaintsScreen())),

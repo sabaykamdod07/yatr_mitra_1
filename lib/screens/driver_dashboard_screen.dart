@@ -11,9 +11,9 @@ import 'package:iconsax/iconsax.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:video_player/video_player.dart';
 
 import '../services/eta.dart';
+import '../services/road_route.dart';
 import '../services/student_context.dart' show parseUtc, fmtClock, fmtDate, dateKey;
 import '../theme/ym_ui.dart';
 import 'role_selection_screen.dart';
@@ -94,8 +94,6 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   final MapController _mapController = MapController();
   Timer? _clockTimer;
   String _timeStr = '';
-  VideoPlayerController? _video;
-  bool _videoReady = false;
 
   // live location (phone -> `live_locations`, the same table the GPS hardware will use)
   StreamSubscription<Position>? _positionSub;
@@ -112,6 +110,10 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   DateTime? _avgAt;
   bool get _hasDevice =>
       ((_driver?['buses'] as Map?)?['gps_device_id'] ?? '').toString().isNotEmpty;
+  // The driver picks the source when the trip starts (only possible on a bus that
+  // has a tracker). No choice recorded = the tracker, as before.
+  bool get _useDevice =>
+      _hasDevice && (_activeTrip?['gps_source']?.toString() != 'phone');
 
   String get _busNumber =>
       ((_driver?['buses'] as Map?)?['bus_number'] ?? '—').toString();
@@ -127,7 +129,6 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
     _updateClock();
     _clockTimer =
         Timer.periodic(const Duration(seconds: 30), (_) => _updateClock());
-    _initVideo();
     _loadEverything();
     // backup for live messages: re-check the feed every 30 seconds
     _feedTimer = Timer.periodic(const Duration(seconds: 30), (_) => _feedTick());
@@ -140,21 +141,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
     _positionSub?.cancel();
     _heartbeat?.cancel();
     if (_channel != null) _supabase.removeChannel(_channel!);
-    _video?.dispose();
     super.dispose();
-  }
-
-  void _initVideo() {
-    final c = VideoPlayerController.asset('assets/images/driver_hero_bus.mp4');
-    _video = c;
-    c.initialize().then((_) {
-      if (!mounted) return;
-      c
-        ..setLooping(true)
-        ..setVolume(0)
-        ..play();
-      setState(() => _videoReady = true);
-    }).catchError((_) {});
   }
 
   void _updateClock() {
@@ -246,6 +233,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
             .eq('trip_id', _activeTrip!['id'])
             .order('stop_order', ascending: true);
         _tripStops = List<Map<String, dynamic>>.from(stopProgress);
+        unawaited(_ensureRoadPath());
 
         final checkins = await _supabase
             .from('trip_checkins')
@@ -557,10 +545,96 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
 
   // ───────────────────────── TRIP ACTIONS ─────────────────────────
 
+  /// Asked when a trip starts on a bus that has a GPS tracker.
+  /// Returns 'device' (the tracker), 'phone' (this phone), or null if cancelled.
+  Future<String?> _chooseGpsSource() {
+    Widget option(BuildContext ctx, String value, IconData icon, String title,
+            String sub,
+            {bool recommended = false}) =>
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: () => Navigator.pop(ctx, value),
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: recommended
+                    ? Ym.amber.withOpacity(0.12)
+                    : const Color(0xFFF8F9FB),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                    color: recommended ? Ym.amber : const Color(0xFFE2E8F0)),
+              ),
+              child: Row(
+                children: [
+                  YmIconBadge(icon: icon, color: Ym.amberDark, size: 44),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title, style: Ym.h(15)),
+                        const SizedBox(height: 2),
+                        Text(sub, style: Ym.t(12.5)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+
+    return showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+        ),
+        padding: EdgeInsets.fromLTRB(
+            20, 14, 20, 20 + MediaQuery.of(ctx).padding.bottom),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 42,
+                height: 4.5,
+                decoration: BoxDecoration(
+                    color: Ym.line, borderRadius: BorderRadius.circular(4)),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text('Where should the bus location come from?', style: Ym.h(18)),
+            const SizedBox(height: 4),
+            Text('Pick one for this trip. Only that source is used.',
+                style: Ym.t(12.5)),
+            const SizedBox(height: 14),
+            option(ctx, 'device', Icons.sensors_rounded, 'Bus GPS tracker',
+                'The device fitted on the bus. Recommended.',
+                recommended: true),
+            option(ctx, 'phone', Icons.smartphone_rounded, 'My phone GPS',
+                "Uses this phone's location. Keep the app open with the screen on."),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _startTrip() async {
     if (_driver == null || _driver!['route_id'] == null) {
       _showSnack('No route assigned, so a trip cannot be started.');
       return;
+    }
+    // a bus with a tracker: the driver chooses where the position comes from
+    String? gpsSource;
+    if (_hasDevice) {
+      gpsSource = await _chooseGpsSource();
+      if (gpsSource == null) return; // cancelled
     }
     try {
       final newTrip = await _supabase.from('trips').insert({
@@ -568,6 +642,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
         'route_id': _driver!['route_id'],
         'institution_id': _driver!['institution_id'],
         'status': 'in_progress',
+        if (gpsSource != null) 'gps_source': gpsSource,
       }).select().single();
 
       final stopRows = _stops.asMap().entries.map((entry) {
@@ -583,9 +658,11 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
       }
 
       _showSnack(
-          _hasDevice
-              ? 'Trip started. The bus GPS device will start sending in a few seconds.'
-              : 'Trip started',
+          gpsSource == 'phone'
+              ? 'Trip started. This phone is sharing the bus location.'
+              : _hasDevice
+                  ? 'Trip started. The bus GPS device will start sending in a few seconds.'
+                  : 'Trip started',
           isError: false);
       await _loadEverything(silent: true);
       if (mounted) setState(() => _currentIndex = 1);
@@ -870,16 +947,25 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   // ───────────────────────── OTHER ACTIONS ─────────────────────────
 
   Future<void> _reportIssue() async {
-    final text = TextEditingController();
     var type = 'breakdown';
     var saving = false;
     String? error;
+    // after a breakdown is sent, the sheet shows what happened (who was asked)
+    String? resultTitle;
+    String? resultText;
+    Color resultColor = Ym.green;
+    IconData resultIcon = Icons.check_circle_rounded;
 
+    // The text controller is owned by the sheet itself (see _OwnedController),
+    // so it is disposed only after the sheet has fully closed. Disposing it
+    // right after `await showModalBottomSheet` crashed the app on phones,
+    // because the sheet is still animating away with the keyboard open.
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => StatefulBuilder(
+      builder: (sheetCtx) => _OwnedController(
+        builder: (_, text) => StatefulBuilder(
         builder: (ctx, setSheet) => Container(
           decoration: const BoxDecoration(
             color: Colors.white,
@@ -909,6 +995,38 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                 ],
               ),
               const SizedBox(height: 16),
+              if (resultText != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: resultColor.withOpacity(0.10),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(resultIcon, color: resultColor, size: 26),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(resultTitle ?? '', style: Ym.h(16)),
+                            const SizedBox(height: 4),
+                            Text(resultText!, style: Ym.t(13)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                YmButton(
+                  label: 'Done',
+                  icon: Icons.check_rounded,
+                  onPressed: () => Navigator.pop(ctx),
+                ),
+              ] else ...[
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
@@ -963,8 +1081,10 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                 ),
               const SizedBox(height: 14),
               YmButton(
-                label: 'Send to admin',
-                icon: Icons.send_rounded,
+                label: type == 'breakdown' ? 'Find nearest bus' : 'Send to admin',
+                icon: type == 'breakdown'
+                    ? Icons.directions_bus_rounded
+                    : Icons.send_rounded,
                 loading: saving,
                 onPressed: () async {
                   if (text.text.trim().isEmpty) {
@@ -986,12 +1106,24 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                       'lat': _myPos?.latitude,
                       'lng': _myPos?.longitude,
                     });
-                    if (ctx.mounted) Navigator.pop(ctx);
-                    _showSnack(
-                        type == 'breakdown'
-                            ? 'Breakdown reported. The nearest bus is being asked to help.'
-                            : 'Issue sent to admin.',
-                        isError: false);
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    if (type == 'breakdown') {
+                      // the database has already asked the nearest bus (or told the
+                      // admin that none is near): show the driver what happened
+                      final o = await _breakdownOutcome();
+                      if (ctx.mounted) {
+                        setSheet(() {
+                          resultTitle = o.$1;
+                          resultText = o.$2;
+                          resultColor = o.$3;
+                          resultIcon = o.$4;
+                          saving = false;
+                        });
+                      }
+                    } else {
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      _showSnack('Issue sent to admin.', isError: false);
+                    }
                     await _safe('issues', _loadIssues);
                     await _safe('rescue', _loadRescue);
                     if (mounted) setState(() {});
@@ -1003,12 +1135,72 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                   }
                 },
               ),
+              ],
             ],
           ),
         ),
+        ),
       ),
     );
-    text.dispose();
+  }
+
+  /// What the database did with the breakdown the driver just reported:
+  /// the nearest bus was asked, or nobody is near and the admin was told.
+  /// Never throws: on any problem it returns a plain "reported" message.
+  Future<(String, String, Color, IconData)> _breakdownOutcome() async {
+    final fallback = (
+      'Breakdown reported',
+      'The admin has been told. The nearest bus is being asked to help.',
+      Ym.amberDark,
+      Icons.check_circle_rounded,
+    );
+    try {
+      final busId = _busId;
+      if (busId == null) return fallback;
+      final since = DateTime.now()
+          .toUtc()
+          .subtract(const Duration(minutes: 3))
+          .toIso8601String();
+      final rows = await _supabase
+          .from('rescue_assignments')
+          .select()
+          .eq('broken_bus_id', busId)
+          .gte('created_at', since)
+          .order('created_at', ascending: false)
+          .limit(1);
+      if (rows.isEmpty) return fallback;
+      final r = Map<String, dynamic>.from(rows.first);
+      if (r['status']?.toString() == 'no_bus') {
+        return (
+          'No bus nearby',
+          'No other running bus within range has free seats. The admin has been told and will arrange a replacement.',
+          Ym.red,
+          Icons.report_problem_rounded,
+        );
+      }
+      var other = 'Another bus';
+      final rescueBusId = r['rescue_bus_id']?.toString();
+      if (rescueBusId != null) {
+        final b = await _supabase
+            .from('buses')
+            .select('bus_number')
+            .eq('id', rescueBusId)
+            .maybeSingle();
+        final n = b?['bus_number']?.toString();
+        if (n != null && n.isNotEmpty) other = n;
+      }
+      final km = r['distance_km'];
+      final away = km == null ? '' : ' (about $km km away)';
+      return (
+        'Asking the nearest bus',
+        '$other$away has been asked to take over your pickup. Wait for that driver to accept. The admin has been told too.',
+        Ym.green,
+        Icons.directions_bus_rounded,
+      );
+    } catch (e) {
+      debugPrint('Breakdown outcome failed: $e');
+      return fallback;
+    }
   }
 
   Future<void> _callNumber(String? phone) async {
@@ -1508,7 +1700,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   }
 
   Future<void> _startLocationSharing() async {
-    if (_hasDevice) {
+    if (_useDevice) {
       // The GPS device on the bus is the only source of location. Pressing
       // "Start trip" is what tells it (through `device-ingest`) to start sending.
       await _safe('device fix', _loadDeviceFix);
@@ -1633,6 +1825,29 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
         .eq('trip_id', t['id'])
         .order('stop_order', ascending: true);
     _tripStops = List<Map<String, dynamic>>.from(rows);
+    unawaited(_ensureRoadPath());
+  }
+
+  // The line on the map follows the roads between the stops. It is fetched once
+  // per set of stops; until it arrives (or if it cannot be fetched) the straight
+  // line between stops is drawn, as before.
+  List<LatLng>? _roadPath;
+  String _roadKey = '';
+
+  Future<void> _ensureRoadPath() async {
+    final pts = <LatLng>[];
+    for (final ts in _tripStops) {
+      final s = ts['stops'];
+      final lat = (s?['lat'] as num?)?.toDouble();
+      final lng = (s?['lng'] as num?)?.toDouble();
+      if (lat != null && lng != null) pts.add(LatLng(lat, lng));
+    }
+    final key = pts.map((p) => '${p.latitude},${p.longitude}').join(';');
+    if (key == _roadKey) return;
+    _roadKey = key;
+    final path = await RoadRoute.fetch(pts);
+    if (!mounted || key != _roadKey) return; // the stops changed meanwhile
+    setState(() => _roadPath = path);
   }
 
   /// Who boards at a stop today: students (minus the ones who marked absent)
@@ -1713,8 +1928,19 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
       final lng = (s?['lng'] as num?)?.toDouble();
       if (lat != null && lng != null) pts.add((i, LatLng(lat, lng)));
     }
-    final done = [for (final p in pts) if (p.$1 <= lastReached) p.$2];
-    final rest = [for (final p in pts) if (p.$1 > lastReached) p.$2];
+    var done = [for (final p in pts) if (p.$1 <= lastReached) p.$2];
+    var rest = [for (final p in pts) if (p.$1 > lastReached) p.$2];
+
+    // the road path is available: draw it instead of the straight lines, cut at the
+    // last stop that was reached (green behind, blue ahead)
+    final road = _roadPath;
+    if (road != null && road.length > 1 && pts.length > 1) {
+      var cut = 0;
+      if (done.isNotEmpty) cut = RoadRoute.nearestIndex(road, done.last);
+      done = cut > 0 ? road.sublist(0, cut + 1) : <LatLng>[];
+      rest = road.sublist(cut);
+    }
+
     final lines = <Polyline>[];
     if (done.length > 1) {
       lines.add(Polyline(
@@ -1750,7 +1976,8 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
     final big = st == _StopState.next || selected;
     final size = big ? 46.0 : 38.0;
     final name = (stop?['stop_name'] ?? '').toString();
-    final showLabel = st == _StopState.next || selected;
+    // every stop shows its name above its number, so the driver can tell the stops apart
+    final showLabel = name.isNotEmpty;
     final showBadge = st != _StopState.reached &&
         (st == _StopState.skip || riders.boardingCount > 0);
 
@@ -1781,8 +2008,10 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                     st == _StopState.skip ? '$name • skip' : name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Ym.t(11,
-                        color: st == _StopState.skip ? Ym.purple : Ym.navy,
+                    style: Ym.t(big ? 11 : 10.5,
+                        color: st == _StopState.skip
+                            ? Ym.purple
+                            : (st == _StopState.reached ? Ym.green : Ym.navy),
                         w: FontWeight.w800),
                   ),
                 ),
@@ -2445,31 +2674,27 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                 const SizedBox(height: 16),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(22),
-                  child: SizedBox(
-                    height: 140,
-                    width: double.infinity,
+                  child: AspectRatio(
+                    aspectRatio: 1280 / 704,
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        if (_videoReady && _video != null)
-                          FittedBox(
-                            fit: BoxFit.cover,
-                            child: SizedBox(
-                              width: _video!.value.size.width,
-                              height: _video!.value.size.height,
-                              child: VideoPlayer(_video!),
-                            ),
-                          )
-                        else
-                          const _DriveScene(),
+                        // still picture, slightly softened so the text on top stays readable
+                        ColorFiltered(
+                          colorFilter: ColorFilter.mode(
+                              Colors.white.withOpacity(0.18), BlendMode.srcATop),
+                          child: Image.asset('assets/images/driver_hero_cab.jpg',
+                              fit: BoxFit.cover),
+                        ),
                         Positioned.fill(
                           child: DecoratedBox(
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
                                 begin: Alignment.bottomCenter,
                                 end: Alignment.topCenter,
+                                stops: const [0.0, 0.55],
                                 colors: [
-                                  Ym.navy.withOpacity(0.55),
+                                  Ym.navy.withOpacity(0.78),
                                   Colors.transparent
                                 ],
                               ),
@@ -2710,7 +2935,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                 Text(label,
                     textAlign: TextAlign.center,
                     maxLines: 2,
-                    style: Ym.t(11.5, w: FontWeight.w700)),
+                    style: Ym.t(12.5, w: FontWeight.w700)),
               ],
             ),
           ),
@@ -2718,6 +2943,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
 
     final onTrip = _activeTrip != null;
     return YmCard(
+      color: const Color(0xFFFFFBF2),
       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 8),
       child: Column(
         children: [
@@ -2725,22 +2951,22 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           action(
-              YmGradientTile(
+              YmShortcutTile(
                   icon: onTrip ? Iconsax.bus : Icons.play_arrow_rounded,
                   color: Ym.green),
               onTrip ? 'View trip' : 'Start trip',
               onTrip ? () => setState(() => _currentIndex = 1) : _startTrip),
           action(
-              const YmGradientTile(icon: Icons.how_to_reg_rounded, color: Ym.blue),
+              const YmShortcutTile(icon: Icons.how_to_reg_rounded, color: Ym.blue),
               'Student check-in',
               () => setState(() => _currentIndex = 1)),
           action(
-              const YmGradientTile(
+              const YmShortcutTile(
                   icon: Icons.warning_amber_rounded, color: Ym.amberDark),
               'Report issue',
               _reportIssue),
           action(
-              const YmGradientTile(icon: Icons.call_rounded, color: Ym.red),
+              const YmShortcutTile(icon: Icons.call_rounded, color: Ym.red),
               'Emergency call',
               _callEmergencyContact),
         ],
@@ -2750,7 +2976,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               action(
-                  const YmGradientTile(
+                  const YmShortcutTile(
                       icon: Icons.qr_code_scanner_rounded, color: Ym.purple),
                   'Scan bus pass',
                   () => Navigator.of(context).push(
@@ -3042,7 +3268,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
               ),
             ),
             const SizedBox(height: 14),
-            if (_hasDevice)
+            if (_useDevice)
               _deviceStatus()
             else if (_locationStatus != null)
               Container(
@@ -4060,4 +4286,29 @@ class _DriveScenePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _DriveScenePainter old) => old.t != t;
+}
+
+
+/// Creates a [TextEditingController] and disposes it only when this widget
+/// leaves the tree, i.e. after a sheet or dialog has completely closed.
+class _OwnedController extends StatefulWidget {
+  final Widget Function(BuildContext context, TextEditingController controller)
+      builder;
+  const _OwnedController({required this.builder});
+
+  @override
+  State<_OwnedController> createState() => _OwnedControllerState();
+}
+
+class _OwnedControllerState extends State<_OwnedController> {
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, _controller);
 }

@@ -295,14 +295,13 @@ class _LoginScreenState extends State<LoginScreen> {
                     children: [
                       Row(
                         children: [
-                          Container(
-                            width: 9, height: 9,
-                            decoration: const BoxDecoration(
-                              color: _accent,
-                              shape: BoxShape.circle,
-                            ),
+                          // the Yatra Mitra logo
+                          Image.asset(
+                            'assets/images/yatra_logo.png',
+                            height: 38,
+                            filterQuality: FilterQuality.high,
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 10),
                           Text(
                             'YATRA MITRA',
                             style: GoogleFonts.plusJakartaSans(
